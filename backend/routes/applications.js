@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const { Application, Candidate, JobOpening, PipelineStage, ActivityLog, Interview } = require('../models');
+const emailService = require('../services/emailService');
 
 // GET /api/applications - Get all applications
 router.get('/', async (req, res) => {
@@ -496,13 +497,15 @@ router.post('/public-apply', async (req, res) => {
 // POST /api/applications/:id/reject - Reject application with reason
 router.post('/:id/reject', async (req, res) => {
   try {
-    const { reason, rejectedBy } = req.body;
+    const { reason, rejectedBy, sendEmail } = req.body;
 
     if (!reason) {
       return res.status(400).json({ error: 'Rejection reason is required' });
     }
 
-    const application = await Application.findById(req.params.id);
+    const application = await Application.findById(req.params.id)
+      .populate('candidate_id', 'name email')
+      .populate('job_id', 'title location');
     if (!application) {
       return res.status(404).json({ error: 'Application not found' });
     }
@@ -562,10 +565,32 @@ router.post('/:id/reject', async (req, res) => {
 
     console.log('❌ Application rejected:', application._id, 'Reason:', reason);
 
+    // Send rejection email if requested
+    let emailSent = false;
+    if (sendEmail && application.candidate_id?.email) {
+      try {
+        await emailService.sendRejection(
+          {
+            name: application.candidate_id.name,
+            email: application.candidate_id.email
+          },
+          {
+            title: application.job_id?.title || 'the position',
+            location: application.job_id?.location || 'Remote'
+          },
+          reason
+        );
+        emailSent = true;
+        console.log('📧 Rejection email sent to:', application.candidate_id.email);
+      } catch (emailError) {
+        console.error('Failed to send rejection email:', emailError);
+      }
+    }
+
     res.json({
       success: true,
       data: { ...application.toObject(), id: application._id },
-      message: 'Application rejected successfully'
+      message: emailSent ? 'Application rejected and notification sent' : 'Application rejected successfully'
     });
   } catch (error) {
     console.error('Error rejecting application:', error);
@@ -915,8 +940,6 @@ router.post('/:id/schedule-screening', async (req, res) => {
     // Send email if requested
     if (sendEmail) {
       try {
-        const emailService = require('../services/emailService');
-
         // Send screening invitation email
         await emailService.sendScreeningInvitation({
           candidateName: candidateName || application.candidate_id?.name,

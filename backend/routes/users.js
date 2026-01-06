@@ -76,7 +76,7 @@ router.post('/', async (req, res) => {
     const user = new User({
       name,
       email: email.toLowerCase(),
-      password: password || 'AIplanet@123', // Default password
+      password: password || process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!', // Default password from env
       role: role || 'recruiter',
       company_id: company_id || null,
       is_active: true
@@ -219,16 +219,19 @@ router.post('/login', async (req, res) => {
 // POST /api/users/seed - Seed default super admin (one-time)
 router.post('/seed', async (req, res) => {
   try {
-    const existingAdmin = await User.findOne({ email: 'meraj@aiplanet.com' });
+    const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'admin@example.com';
+    const adminPassword = process.env.SUPER_ADMIN_PASSWORD || 'ChangeMe123!';
+
+    const existingAdmin = await User.findOne({ email: adminEmail });
 
     if (existingAdmin) {
       return res.json({ success: true, message: 'Super admin already exists', data: existingAdmin });
     }
 
     const superAdmin = new User({
-      name: 'Meraj',
-      email: 'meraj@aiplanet.com',
-      password: 'AIplanet@123',
+      name: 'Admin',
+      email: adminEmail,
+      password: adminPassword,
       role: 'Super Admin',
       is_active: true
     });

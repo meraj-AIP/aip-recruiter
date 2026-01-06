@@ -6,6 +6,9 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import { jobsAPI, applicationsAPI, transformJobToFrontend, transformCandidateToFrontend, statsAPI, aiAPI, lookupsAPI, uploadAPI, departmentsAPI, roleTypesAPI, workSetupsAPI, usersAPI, tasksAPI, assignmentsAPI, interviewsAPI, emailAPI, rolesAPI } from './services/api';
 
+// API Base URL for direct fetch calls
+const API_BASE = 'http://localhost:5001/api';
+
 // ============================================
 // AI Planet - AI-Powered Recruitment Platform
 // Redesigned Applications Section
@@ -695,11 +698,38 @@ export default function App() {
   const [assignmentToReview, setAssignmentToReview] = useState(null);
   const [showDeleteAssignmentModal, setShowDeleteAssignmentModal] = useState(false);
   const [assignmentToDelete, setAssignmentToDelete] = useState(null);
+  const [showAssignmentDetailsModal, setShowAssignmentDetailsModal] = useState(false);
+  const [assignmentToView, setAssignmentToView] = useState(null);
   const [assignmentReviewForm, setAssignmentReviewForm] = useState({
     rating: 0,
     feedback: '',
     status: 'passed' // 'passed' or 'failed'
   });
+
+  // Offer modal
+  const [showOfferModal, setShowOfferModal] = useState(false);
+  const [offerCandidate, setOfferCandidate] = useState(null);
+  const [offerForm, setOfferForm] = useState({
+    offerType: 'text', // 'text' | 'pdf' | 'word'
+    salary: '',
+    salaryCurrency: 'INR',
+    bonus: '',
+    equity: '',
+    benefits: '',
+    startDate: '',
+    expiryDate: '',
+    offerContent: '',
+    termsAndConditions: '',
+    internalNotes: ''
+  });
+  const [offerFile, setOfferFile] = useState(null);
+  const [sendingOffer, setSendingOffer] = useState(false);
+  const [candidateOffer, setCandidateOffer] = useState(null); // Current offer for selected candidate
+
+  // Interview Pass/Fail confirmation modals
+  const [showInterviewPassConfirm, setShowInterviewPassConfirm] = useState(false);
+  const [showInterviewFailConfirm, setShowInterviewFailConfirm] = useState(false);
+  const [confirmInterviewData, setConfirmInterviewData] = useState(null); // { interview, candidate }
 
   // Pipeline view layout
   const [activeStage, setActiveStage] = useState('shortlisting');
@@ -1016,6 +1046,30 @@ export default function App() {
       console.log('✅ Loaded', templates.length, 'assignment templates from database');
     } catch (error) {
       console.error('Error fetching assignments:', error);
+    }
+  };
+
+  // Refresh data after actions - updates candidates list and selected candidate
+  const refreshData = async (selectedCandidateId = null) => {
+    if (!useRealData) return;
+    try {
+      const applications = await applicationsAPI.getAll();
+      if (applications && applications.length > 0) {
+        const transformedCandidates = applications.map(transformCandidateToFrontend);
+        setPeople(transformedCandidates);
+
+        // Update selected candidate if one is selected
+        const candidateIdToUpdate = selectedCandidateId || selectedCandidate?.id;
+        if (candidateIdToUpdate) {
+          const updatedCandidate = transformedCandidates.find(c => c.id === candidateIdToUpdate);
+          if (updatedCandidate) {
+            setSelectedCandidate(updatedCandidate);
+          }
+        }
+        console.log('🔄 Data refreshed');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
     }
   };
 
@@ -1413,6 +1467,43 @@ export default function App() {
       fetchAssignmentsForCandidate(selectedCandidate);
     }
   }, [selectedCandidate?.id, modal]); // Refetch when candidate or modal changes
+
+  // Fetch offer details for selected candidate (for offer-sent and offer-accepted stages)
+  useEffect(() => {
+    const fetchCandidateOffer = async () => {
+      if (!selectedCandidate) {
+        setCandidateOffer(null);
+        return;
+      }
+
+      // Only fetch offer for candidates in offer-sent or offer-accepted stages
+      if (selectedCandidate.stage !== 'offer-sent' && selectedCandidate.stage !== 'offer-accepted') {
+        setCandidateOffer(null);
+        return;
+      }
+
+      try {
+        const applicationId = selectedCandidate.applicationId || selectedCandidate._original?.id || selectedCandidate.id;
+        console.log('📧 Fetching offer for application:', applicationId);
+        const response = await fetch(`${API_BASE}/offers/by-application/${applicationId}`);
+        const data = await response.json();
+
+        if (data.success && data.data.length > 0) {
+          const offer = data.data[0]; // Get the most recent offer
+          console.log('📧 Fetched offer:', offer);
+          setCandidateOffer(offer);
+        } else {
+          console.log('📧 No offer found for this candidate');
+          setCandidateOffer(null);
+        }
+      } catch (error) {
+        console.error('Error fetching offer:', error);
+        setCandidateOffer(null);
+      }
+    };
+
+    fetchCandidateOffer();
+  }, [selectedCandidate?.id, selectedCandidate?.stage]);
 
   // ==================
   // Helper Functions
@@ -2517,11 +2608,14 @@ export default function App() {
       }, ...prev]);
 
       // Reset states and close modal
+      const candidateIdToRefresh = selectedCandidate.id;
       setModal(null);
       setEmailPreview(null);
       setSelectedAssignmentToSend(null);
       setCustomAssignmentInstructions('');
       pop('✅ Assignment sent successfully to ' + selectedCandidate.name + '!');
+      // Refresh data to get latest state
+      await refreshData(candidateIdToRefresh);
     } catch (error) {
       console.error('Error sending assignment:', error);
       pop('Failed to send assignment. Please try again.');
@@ -2613,17 +2707,11 @@ export default function App() {
             comments: [...(p.comments || []), rejectionComment]
           } : p
         ));
-        setSelectedCandidate({
-          ...selectedCandidate,
-          stage: 'rejected',
-          status: 'Rejected',
-          rejectionReason: rejectionReason,
-          rejectionDate: rejectionDate,
-          comments: [...(selectedCandidate.comments || []), rejectionComment]
-        });
         setShowRejectConfirm(false);
         setRejectionReason('');
         pop('❌ Candidate rejected successfully');
+        // Refresh data to get latest state
+        await refreshData(selectedCandidate.id);
       } catch (error) {
         console.error('Failed to reject candidate:', error);
         pop('Failed to reject candidate. Please try again.');
@@ -2697,6 +2785,8 @@ export default function App() {
         stage: revertTargetStage
       });
       pop(`✅ Stage reverted to ${stageMap[revertTargetStage] || revertTargetStage}`);
+      // Refresh data to get latest state
+      await refreshData(currentCandidate.id);
     } catch (error) {
       console.error('Failed to revert stage:', error);
       pop('Stage reverted locally but failed to sync to database');
@@ -2758,7 +2848,10 @@ export default function App() {
       fontSize: 15,
       boxSizing: 'border-box',
       outline: 'none',
-      transition: 'border-color 0.2s ease'
+      transition: 'border-color 0.2s ease',
+      background: 'white',
+      color: '#1e293b',
+      minHeight: 48
     },
     label: {
       display: 'block',
@@ -6861,9 +6954,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Stats Cards - Modern Design */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 24 }}>
-              {stages.map((stage, index) => {
+            {/* Stats Cards - Compact Design with Progress */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: 8, marginBottom: 20 }}>
+              {stages.map((stage) => {
                 const count = people.filter(p => p.stage === stage.id).length;
                 const isSelected = selectedStage === stage.id;
                 const totalPeople = people.length || 1;
@@ -6874,137 +6967,84 @@ export default function App() {
                     key={stage.id}
                     onClick={() => setSelectedStage(selectedStage === stage.id ? 'all' : stage.id)}
                     style={{
-                      position: 'relative',
-                      padding: 0,
+                      padding: '10px 8px',
                       cursor: 'pointer',
-                      border: 'none',
                       background: 'white',
-                      borderRadius: 16,
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      borderRadius: 10,
+                      transition: 'all 0.2s ease',
                       boxShadow: isSelected
-                        ? `0 8px 30px ${stage.color}35, 0 0 0 2px ${stage.color}`
-                        : '0 4px 15px rgba(0,0,0,0.08)',
-                      overflow: 'hidden',
-                      transform: isSelected ? 'scale(1.02)' : 'scale(1)'
+                        ? `0 4px 12px ${stage.color}35, 0 0 0 2px ${stage.color}`
+                        : '0 2px 6px rgba(0,0,0,0.06)',
+                      border: `1px solid ${isSelected ? stage.color : '#e2e8f0'}`,
+                      minWidth: 0
                     }}
                     onMouseEnter={e => {
                       if (!isSelected) {
-                        e.currentTarget.style.transform = 'translateY(-4px) scale(1.02)';
-                        e.currentTarget.style.boxShadow = `0 12px 35px ${stage.color}30`;
+                        e.currentTarget.style.borderColor = stage.color;
+                        e.currentTarget.style.boxShadow = `0 3px 10px ${stage.color}20`;
                       }
                     }}
                     onMouseLeave={e => {
                       if (!isSelected) {
-                        e.currentTarget.style.transform = 'scale(1)';
-                        e.currentTarget.style.boxShadow = '0 4px 15px rgba(0,0,0,0.08)';
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                        e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.06)';
                       }
                     }}
                   >
-                    {/* Gradient Top Bar */}
-                    <div style={{
-                      height: 4,
-                      background: `linear-gradient(90deg, ${stage.color}, ${stage.color}aa)`,
-                      opacity: isSelected ? 1 : 0.6
-                    }} />
-
-                    {/* Background Pattern */}
-                    <div style={{
-                      position: 'absolute',
-                      top: 0,
-                      right: 0,
-                      width: 80,
-                      height: 80,
-                      background: `radial-gradient(circle at top right, ${stage.color}12 0%, transparent 70%)`,
-                      pointerEvents: 'none'
-                    }} />
-
-                    {/* Content */}
-                    <div style={{ padding: '16px 14px', position: 'relative' }}>
-                      {/* Icon with glow effect */}
-                      <div style={{
-                        width: 40,
-                        height: 40,
-                        margin: '0 auto 10px',
-                        background: `linear-gradient(135deg, ${stage.color}20, ${stage.color}08)`,
-                        borderRadius: 12,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 20,
-                        boxShadow: isSelected ? `0 4px 15px ${stage.color}25` : 'none',
-                        transition: 'all 0.3s'
-                      }}>
-                        {stage.icon}
-                      </div>
-
-                      {/* Count with animation feel */}
-                      <div style={{
-                        fontSize: 28,
-                        fontWeight: 800,
-                        background: `linear-gradient(135deg, ${stage.color}, ${stage.color}cc)`,
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        backgroundClip: 'text',
-                        lineHeight: 1,
-                        textAlign: 'center',
-                        marginBottom: 4
+                    {/* Icon + Count Row */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12 }}>{stage.icon}</span>
+                      <span style={{
+                        fontSize: 18,
+                        fontWeight: 700,
+                        color: stage.color
                       }}>
                         {count}
-                      </div>
-
-                      {/* Stage Name */}
-                      <div style={{
-                        fontSize: 11,
-                        color: isSelected ? stage.color : '#64748b',
-                        fontWeight: 700,
-                        textAlign: 'center',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        marginBottom: 8
-                      }}>
-                        {stage.name}
-                      </div>
-
-                      {/* Progress Bar */}
-                      <div style={{
-                        height: 4,
-                        background: '#e2e8f0',
-                        borderRadius: 2,
-                        overflow: 'hidden'
-                      }}>
-                        <div style={{
-                          height: '100%',
-                          width: `${percentage}%`,
-                          background: `linear-gradient(90deg, ${stage.color}, ${stage.color}88)`,
-                          borderRadius: 2,
-                          transition: 'width 0.5s ease-out'
-                        }} />
-                      </div>
-
-                      {/* Percentage Label */}
-                      <div style={{
-                        fontSize: 10,
-                        color: '#94a3b8',
-                        textAlign: 'center',
-                        marginTop: 4,
-                        fontWeight: 500
-                      }}>
-                        {percentage}% of total
-                      </div>
+                      </span>
                     </div>
 
-                    {/* Selection Glow */}
-                    {isSelected && (
+                    {/* Stage Name */}
+                    <div style={{
+                      fontSize: 9,
+                      color: isSelected ? stage.color : '#64748b',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.3px',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      marginBottom: 6
+                    }}>
+                      {stage.name}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div style={{
+                      height: 3,
+                      background: '#e2e8f0',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                      marginBottom: 4
+                    }}>
                       <div style={{
-                        position: 'absolute',
-                        inset: 0,
-                        background: `linear-gradient(180deg, ${stage.color}08 0%, ${stage.color}03 100%)`,
-                        pointerEvents: 'none'
+                        height: '100%',
+                        width: `${percentage}%`,
+                        background: stage.color,
+                        borderRadius: 2,
+                        transition: 'width 0.3s ease'
                       }} />
-                    )}
+                    </div>
+
+                    {/* Percentage */}
+                    <div style={{
+                      fontSize: 9,
+                      color: '#94a3b8',
+                      textAlign: 'center',
+                      fontWeight: 500
+                    }}>
+                      {percentage}%
+                    </div>
                   </div>
                 );
               })}
@@ -9407,14 +9447,21 @@ export default function App() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
                 {assignments.map((assignment, idx) => (
-                  <div key={assignment.id} style={{
+                  <div
+                    key={assignment.id}
+                    onClick={() => {
+                      setAssignmentToView(assignment);
+                      setShowAssignmentDetailsModal(true);
+                    }}
+                    style={{
                     background: 'white',
                     borderRadius: 16,
                     border: '1px solid #e2e8f0',
                     overflow: 'hidden',
                     boxShadow: '0 4px 20px rgba(0,0,0,0.04)',
                     transition: 'all 0.3s ease',
-                    position: 'relative'
+                    position: 'relative',
+                    cursor: 'pointer'
                   }}>
                     {/* Top colored bar */}
                     <div style={{
@@ -9480,7 +9527,8 @@ export default function App() {
                         {/* Actions Menu */}
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setSelectedAssignment(assignment);
                               setAssignmentForm({
                                 name: assignment.name,
@@ -9511,7 +9559,7 @@ export default function App() {
                             ✏️
                           </button>
                           <button
-                            onClick={() => deleteAssignment(assignment.id)}
+                            onClick={(e) => { e.stopPropagation(); deleteAssignment(assignment.id); }}
                             style={{
                               width: 36,
                               height: 36,
@@ -13026,31 +13074,367 @@ export default function App() {
                           {selectedCandidate.stage === 'interview' && (() => {
                             const hasScheduledInterview = selectedCandidate.interviewRounds?.some(i => i.status === 'Scheduled');
                             const scheduledInterview = selectedCandidate.interviewRounds?.find(i => i.status === 'Scheduled');
+                            const hasCompletedInterviews = selectedCandidate.interviewRounds?.some(i => i.status === 'Completed' || i.status === 'Passed');
                             if (hasScheduledInterview) {
                               return (
                                 <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 8, padding: 12 }}>
                                   <div style={{ fontSize: 12, color: '#92400e', fontWeight: 600, marginBottom: 4 }}>⏰ Interview Scheduled</div>
                                   <div style={{ fontSize: 11, color: '#78350f', marginBottom: 8 }}>{scheduledInterview.title} on {new Date(scheduledInterview.date).toLocaleDateString()} at {scheduledInterview.time}</div>
-                                  <button onClick={() => { setInterviewCandidate(selectedCandidate); setShowInterviewModal(true); setInterviewForm({ title: scheduledInterview.title, date: scheduledInterview.date, time: scheduledInterview.time, interviewer: scheduledInterview.interviewer, duration: scheduledInterview.duration || '60', locationType: scheduledInterview.locationType || 'online', platform: scheduledInterview.platform || 'Google Meet', meetingLink: scheduledInterview.meetingLink || '', address: scheduledInterview.address || '', notes: scheduledInterview.notes || '', isEditing: true, editingRound: scheduledInterview.round, editingInterviewId: scheduledInterview.id }); }} style={{ ...styles.btn1, padding: '6px 12px', fontSize: 11, background: '#f59e0b', justifyContent: 'center', width: '100%' }}>✏️ Edit Interview</button>
+                                  <button onClick={() => { setInterviewCandidate(selectedCandidate); setShowInterviewModal(true); setInterviewForm({ title: scheduledInterview.title, date: scheduledInterview.date, time: scheduledInterview.time, interviewer: scheduledInterview.interviewer, duration: scheduledInterview.duration || '60', locationType: scheduledInterview.locationType || 'online', platform: scheduledInterview.platform || 'Google Meet', meetingLink: scheduledInterview.meetingLink || '', address: scheduledInterview.address || '', notes: scheduledInterview.notes || '', isEditing: true, editingRound: scheduledInterview.round, editingInterviewId: scheduledInterview.id }); }} style={{ ...styles.btn1, padding: '6px 12px', fontSize: 11, background: '#f59e0b', justifyContent: 'center', width: '100%', marginBottom: 8 }}>✏️ Edit Interview</button>
+                                  {/* Pass/Fail Interview Buttons */}
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button
+                                      onClick={() => {
+                                        setConfirmInterviewData({ interview: scheduledInterview, candidate: selectedCandidate });
+                                        setShowInterviewPassConfirm(true);
+                                      }}
+                                      style={{ flex: 1, background: '#10b981', color: 'white', border: 'none', padding: '8px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                      ✅ Passed
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setConfirmInterviewData({ interview: scheduledInterview, candidate: selectedCandidate });
+                                        setShowInterviewFailConfirm(true);
+                                      }}
+                                      style={{ flex: 1, background: '#ef4444', color: 'white', border: 'none', padding: '8px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                      ❌ Failed
+                                    </button>
+                                  </div>
                                 </div>
                               );
                             }
-                            return <button onClick={() => { setInterviewCandidate(selectedCandidate); setShowInterviewModal(true); setInterviewForm({ title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1} - ${selectedCandidate.role}`, date: '', time: '', interviewer: '', duration: '60', locationType: 'online', platform: 'Google Meet', meetingLink: '', address: '', notes: '', isEditing: false }); }} style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}>📅 Schedule Next Round</button>;
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <button onClick={() => { setInterviewCandidate(selectedCandidate); setShowInterviewModal(true); setInterviewForm({ title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1} - ${selectedCandidate.role}`, date: '', time: '', interviewer: '', duration: '60', locationType: 'online', platform: 'Google Meet', meetingLink: '', address: '', notes: '', isEditing: false }); }} style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}>📅 Schedule Next Round</button>
+                                {hasCompletedInterviews && (
+                                  <button
+                                    onClick={() => {
+                                      setOfferCandidate(selectedCandidate);
+                                      setOfferForm({
+                                        offerType: 'text',
+                                        salary: '',
+                                        salaryCurrency: 'INR',
+                                        bonus: '',
+                                        equity: '',
+                                        benefits: '',
+                                        startDate: '',
+                                        expiryDate: '',
+                                        offerContent: '',
+                                        termsAndConditions: '',
+                                        internalNotes: ''
+                                      });
+                                      setOfferFile(null);
+                                      setShowOfferModal(true);
+                                    }}
+                                    style={{
+                                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                      color: 'white',
+                                      border: 'none',
+                                      padding: '12px 16px',
+                                      borderRadius: 10,
+                                      fontSize: 14,
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 8,
+                                      boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+                                    }}
+                                  >
+                                    <span>🎉</span> Send Offer
+                                  </button>
+                                )}
+                              </div>
+                            );
                           })()}
-                          {selectedCandidate.stage === 'offer-sent' && (
-                            <button
-                              onClick={() => pop('📧 Offer resent to ' + selectedCandidate.name)}
-                              style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
-                            >
-                              📧 Resend Offer
-                            </button>
+                          {(selectedCandidate.stage === 'offer-sent' || selectedCandidate.stage === 'offer-accepted') && candidateOffer && (
+                            <div style={{
+                              background: selectedCandidate.stage === 'offer-accepted'
+                                ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
+                                : 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                              border: `2px solid ${selectedCandidate.stage === 'offer-accepted' ? '#22c55e' : '#3b82f6'}`,
+                              borderRadius: 16,
+                              padding: 0,
+                              marginBottom: 16,
+                              overflow: 'hidden',
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                            }}>
+                              {/* Offer Header Banner */}
+                              <div style={{
+                                background: selectedCandidate.stage === 'offer-accepted'
+                                  ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+                                  : 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                padding: '16px 20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between'
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                  <div style={{
+                                    width: 44,
+                                    height: 44,
+                                    borderRadius: 12,
+                                    background: 'rgba(255,255,255,0.2)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 22
+                                  }}>
+                                    {selectedCandidate.stage === 'offer-accepted' ? '🎉' : '📋'}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>
+                                      {selectedCandidate.stage === 'offer-accepted' ? 'Offer Accepted!' : 'Job Offer'}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)' }}>
+                                      {candidateOffer.jobTitle}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span style={{
+                                  fontSize: 11,
+                                  padding: '6px 12px',
+                                  borderRadius: 20,
+                                  background: 'rgba(255,255,255,0.2)',
+                                  color: 'white',
+                                  fontWeight: 600,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: 0.5
+                                }}>
+                                  {candidateOffer.status}
+                                </span>
+                              </div>
+
+                              {/* Salary Highlight */}
+                              <div style={{
+                                padding: '20px',
+                                borderBottom: '1px solid rgba(0,0,0,0.06)',
+                                textAlign: 'center',
+                                background: 'rgba(255,255,255,0.5)'
+                              }}>
+                                <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                  Annual Package
+                                </div>
+                                <div style={{
+                                  fontSize: 28,
+                                  fontWeight: 800,
+                                  color: selectedCandidate.stage === 'offer-accepted' ? '#16a34a' : '#1d4ed8',
+                                  letterSpacing: -0.5
+                                }}>
+                                  {candidateOffer.salaryCurrency === 'USD' ? '$' : candidateOffer.salaryCurrency === 'EUR' ? '€' : candidateOffer.salaryCurrency === 'GBP' ? '£' : '₹'}
+                                  {candidateOffer.salary}
+                                </div>
+                                {candidateOffer.bonus && (
+                                  <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
+                                    + {candidateOffer.bonus} bonus
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Offer Details Grid */}
+                              <div style={{ padding: '16px 20px' }}>
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: '1fr 1fr',
+                                  gap: 12,
+                                  marginBottom: 16
+                                }}>
+                                  {candidateOffer.startDate && (
+                                    <div style={{
+                                      background: 'white',
+                                      borderRadius: 10,
+                                      padding: 12,
+                                      border: '1px solid rgba(0,0,0,0.06)'
+                                    }}>
+                                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>Start Date</div>
+                                      <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>
+                                        {new Date(candidateOffer.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div style={{
+                                    background: 'white',
+                                    borderRadius: 10,
+                                    padding: 12,
+                                    border: '1px solid rgba(0,0,0,0.06)'
+                                  }}>
+                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>Sent On</div>
+                                    <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>
+                                      {candidateOffer.sentAt ? new Date(candidateOffer.sentAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'N/A'}
+                                    </div>
+                                  </div>
+                                  {candidateOffer.responseDate && (
+                                    <div style={{
+                                      background: 'white',
+                                      borderRadius: 10,
+                                      padding: 12,
+                                      border: '1px solid rgba(0,0,0,0.06)',
+                                      gridColumn: 'span 2'
+                                    }}>
+                                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>
+                                        {candidateOffer.status === 'accepted' ? 'Accepted On' : 'Response Date'}
+                                      </div>
+                                      <div style={{ fontSize: 14, fontWeight: 600, color: candidateOffer.status === 'accepted' ? '#16a34a' : '#1e293b' }}>
+                                        {new Date(candidateOffer.responseDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Benefits Section */}
+                                {candidateOffer.benefits && (
+                                  <div style={{
+                                    background: 'white',
+                                    borderRadius: 10,
+                                    padding: 12,
+                                    border: '1px solid rgba(0,0,0,0.06)',
+                                    marginBottom: 12
+                                  }}>
+                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>Benefits Package</div>
+                                    <div style={{ fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                                      {candidateOffer.benefits}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Offer Letter File */}
+                                {candidateOffer.offerFile?.url && (
+                                  <a
+                                    href={candidateOffer.offerFile.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 10,
+                                      background: 'white',
+                                      borderRadius: 10,
+                                      padding: 12,
+                                      border: '1px solid rgba(0,0,0,0.06)',
+                                      marginBottom: 12,
+                                      textDecoration: 'none',
+                                      transition: 'all 0.2s'
+                                    }}
+                                  >
+                                    <div style={{
+                                      width: 40,
+                                      height: 40,
+                                      borderRadius: 8,
+                                      background: '#fef3c7',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      fontSize: 18
+                                    }}>
+                                      📄
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>
+                                        {candidateOffer.offerFile.name || 'Offer Letter'}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: '#64748b' }}>
+                                        Click to view or download
+                                      </div>
+                                    </div>
+                                    <div style={{ color: '#3b82f6', fontSize: 18 }}>↗</div>
+                                  </a>
+                                )}
+                              </div>
+
+                              {/* Edit & Resend Buttons - only for offer-sent stage */}
+                              {selectedCandidate.stage === 'offer-sent' && (
+                                <div style={{
+                                  display: 'flex',
+                                  gap: 8,
+                                  padding: '0 20px 20px',
+                                }}>
+                                  <button
+                                    onClick={() => {
+                                      // Pre-populate offer form with existing offer data
+                                      setOfferCandidate(selectedCandidate);
+                                      setOfferForm({
+                                        offerType: candidateOffer.offerType || 'text',
+                                        salary: candidateOffer.salary || '',
+                                        salaryCurrency: candidateOffer.salaryCurrency || 'INR',
+                                        bonus: candidateOffer.bonus || '',
+                                        equity: candidateOffer.equity || '',
+                                        benefits: candidateOffer.benefits || '',
+                                        startDate: candidateOffer.startDate ? new Date(candidateOffer.startDate).toISOString().split('T')[0] : '',
+                                        expiryDate: candidateOffer.expiryDate ? new Date(candidateOffer.expiryDate).toISOString().split('T')[0] : '',
+                                        offerContent: candidateOffer.offerContent || '',
+                                        termsAndConditions: candidateOffer.termsAndConditions || '',
+                                        internalNotes: candidateOffer.internalNotes || '',
+                                        editingOfferId: candidateOffer.id, // Mark as editing
+                                        existingFile: candidateOffer.offerFile || null // Keep track of existing file
+                                      });
+                                      setOfferFile(null);
+                                      setShowOfferModal(true);
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      padding: '12px 16px',
+                                      background: 'white',
+                                      color: '#f59e0b',
+                                      border: '2px solid #f59e0b',
+                                      borderRadius: 10,
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 6,
+                                      transition: 'all 0.2s'
+                                    }}
+                                  >
+                                    <span>✏️</span> Edit
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const resendRes = await fetch(`${API_BASE}/offers/${candidateOffer.id}/resend`, { method: 'POST' });
+                                        const resendData = await resendRes.json();
+                                        if (resendData.success) {
+                                          pop('Offer resent to ' + selectedCandidate.name);
+                                        } else {
+                                          pop(resendData.error || 'Failed to resend offer');
+                                        }
+                                      } catch (error) {
+                                        console.error('Error resending offer:', error);
+                                        pop('Failed to resend offer');
+                                      }
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      padding: '12px 16px',
+                                      background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: 10,
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 6
+                                    }}
+                                  >
+                                    <span>📧</span> Resend
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                           {selectedCandidate.stage === 'offer-accepted' && (
                             <button
-                              onClick={() => {
-                                setPeople(p => p.map(c => c.id === selectedCandidate.id ? { ...c, stage: 'hired', status: 'Hired' } : c));
-                                setSelectedCandidate({ ...selectedCandidate, stage: 'hired', status: 'Hired' });
+                              onClick={async () => {
                                 pop('🎉 Onboarding started for ' + selectedCandidate.name);
+                                // Refresh data to get latest state
+                                await refreshData(selectedCandidate.id);
                               }}
                               style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}
                             >
@@ -13060,157 +13444,162 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Assignment Actions - Show when assignment has been sent */}
-                      {candidateAssignments.length > 0 && (
-                        <div style={{
-                          ...styles.box,
-                          padding: 16,
-                          background: candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed'
-                            ? '#eff6ff'
-                            : candidateAssignments[0].status === 'failed'
-                            ? '#fef2f2'
-                            : '#f0fdf4',
-                          border: `2px solid ${
-                            candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed'
-                              ? '#3b82f6'
-                              : candidateAssignments[0].status === 'failed'
-                              ? '#ef4444'
-                              : '#22c55e'
-                          }`
-                        }}>
-                          <h4 style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed'
-                              ? '#1e40af'
-                              : candidateAssignments[0].status === 'failed'
-                              ? '#dc2626'
-                              : '#166534',
-                            marginBottom: 12,
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.5
-                          }}>
-                            {candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed'
-                              ? '✅ Assignment Reviewed'
-                              : candidateAssignments[0].status === 'failed'
-                              ? '❌ Assignment Failed'
-                              : '📝 Assignment Sent'}
-                          </h4>
-                          <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 13, color: '#1e293b', marginBottom: 4 }}>
-                              <strong>{candidateAssignments[0].assignmentName}</strong>
-                            </div>
-                            <div style={{ fontSize: 12, color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                              <span>Status: <strong style={{ textTransform: 'capitalize', color:
-                                candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed' ? '#22c55e' :
-                                candidateAssignments[0].status === 'failed' ? '#ef4444' : '#f59e0b'
-                              }}>{candidateAssignments[0].status}</strong></span>
-                              <span>Sent: {new Date(candidateAssignments[0].sentAt).toLocaleDateString()}</span>
-                              {candidateAssignments[0].score && (
-                                <span>Rating: <strong style={{ color: '#f59e0b' }}>{'⭐'.repeat(candidateAssignments[0].score)}</strong></span>
-                              )}
-                            </div>
-                            {candidateAssignments[0].reviewedBy && (
-                              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                                Reviewed by: <strong>{candidateAssignments[0].reviewedBy}</strong>
-                                {candidateAssignments[0].reviewedAt && (
-                                  <span> on {new Date(candidateAssignments[0].reviewedAt).toLocaleDateString()}</span>
+                      {/* Assignment Actions - Show when assignment has been sent, hide when interview is scheduled or offer is sent */}
+                      {candidateAssignments.length > 0 && selectedCandidate?.stage !== 'interview' && selectedCandidate?.stage !== 'offer-sent' && selectedCandidate?.stage !== 'offer-accepted' && selectedCandidate?.stage !== 'hired' && (
+                        (() => {
+                          const assignment = candidateAssignments[0];
+                          const isReviewed = assignment.status === 'reviewed' || assignment.status === 'passed';
+                          const isFailed = assignment.status === 'failed';
+
+                          // Compact card for reviewed/passed assignments
+                          if (isReviewed) {
+                            return (
+                              <div style={{
+                                background: '#f0fdf4',
+                                border: '1px solid #86efac',
+                                borderRadius: 10,
+                                padding: 12,
+                                marginBottom: 16
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ fontSize: 16 }}>✅</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#166534' }}>Assignment Passed</span>
+                                  </div>
+                                  {assignment.score && (
+                                    <span style={{ fontSize: 12, color: '#f59e0b' }}>{'⭐'.repeat(assignment.score)}</span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 12, color: '#475569' }}>
+                                  {assignment.assignmentName}
+                                  {assignment.reviewedBy && (
+                                    <span style={{ color: '#94a3b8' }}> • Reviewed by {assignment.reviewedBy}</span>
+                                  )}
+                                </div>
+                                {/* Schedule Interview Button */}
+                                <button
+                                  onClick={() => {
+                                    setInterviewCandidate(selectedCandidate);
+                                    setInterviewForm({
+                                      title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1}`,
+                                      date: '',
+                                      time: '',
+                                      interviewer: '',
+                                      duration: '60',
+                                      locationType: 'online',
+                                      platform: 'Google Meet',
+                                      meetingLink: '',
+                                      address: '',
+                                      notes: '',
+                                      isEditing: false
+                                    });
+                                    setShowInterviewModal(true);
+                                  }}
+                                  style={{
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '10px 16px',
+                                    borderRadius: 8,
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    width: '100%',
+                                    marginTop: 10,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 6
+                                  }}
+                                >
+                                  📅 Schedule Interview
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          // Regular card for pending/failed assignments
+                          return (
+                            <div style={{
+                              ...styles.box,
+                              padding: 16,
+                              background: isFailed ? '#fef2f2' : '#f0fdf4',
+                              border: `2px solid ${isFailed ? '#ef4444' : '#22c55e'}`
+                            }}>
+                              <h4 style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: isFailed ? '#dc2626' : '#166534',
+                                marginBottom: 12,
+                                textTransform: 'uppercase',
+                                letterSpacing: 0.5
+                              }}>
+                                {isFailed ? '❌ Assignment Failed' : '📝 Assignment Sent'}
+                              </h4>
+                              <div style={{ marginBottom: 12 }}>
+                                <div style={{ fontSize: 13, color: '#1e293b', marginBottom: 4 }}>
+                                  <strong>{assignment.assignmentName}</strong>
+                                </div>
+                                <div style={{ fontSize: 12, color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                                  <span>Status: <strong style={{ textTransform: 'capitalize', color: isFailed ? '#ef4444' : '#f59e0b' }}>{assignment.status}</strong></span>
+                                  <span>Sent: {new Date(assignment.sentAt).toLocaleDateString()}</span>
+                                </div>
+                                {assignment.reviewNotes && (
+                                  <div style={{
+                                    fontSize: 12,
+                                    color: '#475569',
+                                    marginTop: 8,
+                                    padding: 8,
+                                    background: 'rgba(255,255,255,0.5)',
+                                    borderRadius: 6,
+                                    fontStyle: 'italic'
+                                  }}>
+                                    "{assignment.reviewNotes}"
+                                  </div>
                                 )}
                               </div>
-                            )}
-                            {candidateAssignments[0].reviewNotes && (
-                              <div style={{
-                                fontSize: 12,
-                                color: '#475569',
-                                marginTop: 8,
-                                padding: 8,
-                                background: 'rgba(255,255,255,0.5)',
-                                borderRadius: 6,
-                                fontStyle: 'italic'
-                              }}>
-                                "{candidateAssignments[0].reviewNotes}"
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {/* Show Mark Completed button only if not already reviewed/passed/failed */}
+                                {!['reviewed', 'passed', 'failed'].includes(assignment.status) && (
+                                  <button
+                                    onClick={() => {
+                                      setAssignmentToReview(assignment);
+                                      setAssignmentReviewForm({
+                                        rating: 0,
+                                        feedback: '',
+                                        status: 'passed'
+                                      });
+                                      setShowAssignmentReviewModal(true);
+                                    }}
+                                    style={{
+                                      background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                      color: 'white',
+                                      border: 'none',
+                                      padding: '12px 16px',
+                                      borderRadius: 10,
+                                      fontSize: 14,
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 8,
+                                      boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                                    }}
+                                  >
+                                    <span>✓</span> Mark Assignment Completed
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }}
+                                  style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
+                                >
+                                  📝 View / Send Another Assignment
+                                </button>
                               </div>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {/* Show Mark Completed button only if not already reviewed/passed/failed */}
-                            {!['reviewed', 'passed', 'failed'].includes(candidateAssignments[0].status) && (
-                              <button
-                                onClick={() => {
-                                  setAssignmentToReview(candidateAssignments[0]);
-                                  setAssignmentReviewForm({
-                                    rating: 0,
-                                    feedback: '',
-                                    status: 'passed'
-                                  });
-                                  setShowAssignmentReviewModal(true);
-                                }}
-                                style={{
-                                  background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '12px 16px',
-                                  borderRadius: 10,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
-                                }}
-                              >
-                                <span>✓</span> Mark Assignment Completed
-                              </button>
-                            )}
-                            {/* If passed, show option to schedule interview */}
-                            {(candidateAssignments[0].status === 'reviewed' || candidateAssignments[0].status === 'passed') && selectedCandidate?.stage !== 'interview' && (
-                              <button
-                                onClick={() => {
-                                  setInterviewCandidate(selectedCandidate);
-                                  setInterviewForm({
-                                    title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1}`,
-                                    date: '',
-                                    time: '',
-                                    interviewer: '',
-                                    duration: '60',
-                                    locationType: 'online',
-                                    platform: 'Google Meet',
-                                    meetingLink: '',
-                                    address: '',
-                                    notes: '',
-                                    isEditing: false
-                                  });
-                                  setShowInterviewModal(true);
-                                }}
-                                style={{
-                                  background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '12px 16px',
-                                  borderRadius: 10,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)'
-                                }}
-                              >
-                                📅 Schedule Interview
-                              </button>
-                            )}
-                            <button
-                              onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }}
-                              style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
-                            >
-                              📝 View / Send Another Assignment
-                            </button>
-                          </div>
-                        </div>
+                            </div>
+                          );
+                        })()
                       )}
 
                       {/* Move & Final Actions */}
@@ -13489,6 +13878,207 @@ export default function App() {
               </div>
             )}
 
+            {/* Interview Passed Confirmation Modal */}
+            {showInterviewPassConfirm && confirmInterviewData && (
+              <div
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'rgba(0,0,0,0.6)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10000
+                }}
+                onClick={() => {
+                  setShowInterviewPassConfirm(false);
+                  setConfirmInterviewData(null);
+                }}
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    background: 'white',
+                    borderRadius: 20,
+                    width: 480,
+                    padding: 32,
+                    boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                    <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
+                    <h3 style={{ fontSize: 22, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>
+                      Mark Interview as Passed?
+                    </h3>
+                    <p style={{ color: '#64748b', fontSize: 15, lineHeight: 1.6 }}>
+                      Are you sure you want to mark <strong>{confirmInterviewData.candidate?.name}</strong>'s interview as <strong style={{ color: '#10b981' }}>passed</strong>?
+                    </p>
+                  </div>
+
+                  <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#065f46', marginBottom: 8 }}>📋 Interview Details</div>
+                    <div style={{ fontSize: 13, color: '#047857' }}>
+                      <div><strong>Title:</strong> {confirmInterviewData.interview?.title}</div>
+                      <div><strong>Date:</strong> {confirmInterviewData.interview?.date ? new Date(confirmInterviewData.interview.date).toLocaleDateString() : 'N/A'}</div>
+                      <div><strong>Time:</strong> {confirmInterviewData.interview?.time || 'N/A'}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+                    <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.5 }}>
+                      <strong>What happens next:</strong>
+                      <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+                        <li>The interview will be marked as completed</li>
+                        <li>You will be able to send an offer to the candidate</li>
+                        <li>This action can be undone by scheduling another interview round</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <button
+                      onClick={() => {
+                        setShowInterviewPassConfirm(false);
+                        setConfirmInterviewData(null);
+                      }}
+                      style={{
+                        ...styles.btn2,
+                        flex: 1,
+                        justifyContent: 'center'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`${API_BASE}/interviews/${confirmInterviewData.interview.id}/status`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status: 'completed' })
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            pop('✅ Interview marked as passed! You can now send an offer.');
+                            await refreshData(confirmInterviewData.candidate.id);
+                          }
+                        } catch (error) {
+                          console.error('Error updating interview:', error);
+                          pop('Failed to update interview');
+                        }
+                        setShowInterviewPassConfirm(false);
+                        setConfirmInterviewData(null);
+                      }}
+                      style={{
+                        ...styles.btn1,
+                        flex: 1,
+                        justifyContent: 'center',
+                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)'
+                      }}
+                    >
+                      ✅ Yes, Mark as Passed
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Interview Failed Confirmation Modal */}
+            {showInterviewFailConfirm && confirmInterviewData && (
+              <div
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'rgba(0,0,0,0.6)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10000
+                }}
+                onClick={() => {
+                  setShowInterviewFailConfirm(false);
+                  setConfirmInterviewData(null);
+                }}
+              >
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    background: 'white',
+                    borderRadius: 20,
+                    width: 480,
+                    padding: 32,
+                    boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                    <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+                    <h3 style={{ fontSize: 22, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>
+                      Mark Interview as Failed?
+                    </h3>
+                    <p style={{ color: '#64748b', fontSize: 15, lineHeight: 1.6 }}>
+                      Are you sure you want to mark <strong>{confirmInterviewData.candidate?.name}</strong>'s interview as <strong style={{ color: '#ef4444' }}>failed</strong>?
+                    </p>
+                  </div>
+
+                  <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#991b1b', marginBottom: 8 }}>📋 Interview Details</div>
+                    <div style={{ fontSize: 13, color: '#b91c1c' }}>
+                      <div><strong>Title:</strong> {confirmInterviewData.interview?.title}</div>
+                      <div><strong>Date:</strong> {confirmInterviewData.interview?.date ? new Date(confirmInterviewData.interview.date).toLocaleDateString() : 'N/A'}</div>
+                      <div><strong>Time:</strong> {confirmInterviewData.interview?.time || 'N/A'}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 16, marginBottom: 24 }}>
+                    <div style={{ fontSize: 13, color: '#991b1b', lineHeight: 1.5 }}>
+                      <strong>Warning:</strong> This will reject the candidate from the pipeline. A rejection reason will be required in the next step.
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <button
+                      onClick={() => {
+                        setShowInterviewFailConfirm(false);
+                        setConfirmInterviewData(null);
+                      }}
+                      style={{
+                        ...styles.btn2,
+                        flex: 1,
+                        justifyContent: 'center'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        // Close this modal and open rejection modal
+                        setShowInterviewFailConfirm(false);
+                        setRejectCandidate(confirmInterviewData.candidate);
+                        setShowRejectModal(true);
+                        setConfirmInterviewData(null);
+                      }}
+                      style={{
+                        ...styles.btn1,
+                        flex: 1,
+                        justifyContent: 'center',
+                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.4)'
+                      }}
+                    >
+                      ❌ Yes, Mark as Failed
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Screening Call Modal - Form View */}
             {showScreeningModal && selectedCandidate && !showScreeningPreview && (
               <div
@@ -13535,18 +14125,66 @@ export default function App() {
                         type="date"
                         value={screeningForm.date}
                         onChange={(e) => setScreeningForm({ ...screeningForm, date: e.target.value })}
-                        style={styles.input}
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          borderRadius: 12,
+                          border: '2px solid #e2e8f0',
+                          fontSize: 15,
+                          boxSizing: 'border-box',
+                          outline: 'none',
+                          background: 'white',
+                          color: '#1e293b',
+                          minHeight: 48,
+                          cursor: 'pointer'
+                        }}
                         min={new Date().toISOString().split('T')[0]}
                       />
                     </div>
                     <div>
                       <label style={styles.label}>Time *</label>
-                      <input
-                        type="time"
+                      <select
                         value={screeningForm.time}
                         onChange={(e) => setScreeningForm({ ...screeningForm, time: e.target.value })}
-                        style={styles.input}
-                      />
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          borderRadius: 12,
+                          border: '2px solid #e2e8f0',
+                          fontSize: 15,
+                          boxSizing: 'border-box',
+                          outline: 'none',
+                          background: 'white',
+                          color: '#1e293b',
+                          minHeight: 48,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="">Select Time</option>
+                        <option value="09:00">09:00 AM</option>
+                        <option value="09:30">09:30 AM</option>
+                        <option value="10:00">10:00 AM</option>
+                        <option value="10:30">10:30 AM</option>
+                        <option value="11:00">11:00 AM</option>
+                        <option value="11:30">11:30 AM</option>
+                        <option value="12:00">12:00 PM</option>
+                        <option value="12:30">12:30 PM</option>
+                        <option value="13:00">01:00 PM</option>
+                        <option value="13:30">01:30 PM</option>
+                        <option value="14:00">02:00 PM</option>
+                        <option value="14:30">02:30 PM</option>
+                        <option value="15:00">03:00 PM</option>
+                        <option value="15:30">03:30 PM</option>
+                        <option value="16:00">04:00 PM</option>
+                        <option value="16:30">04:30 PM</option>
+                        <option value="17:00">05:00 PM</option>
+                        <option value="17:30">05:30 PM</option>
+                        <option value="18:00">06:00 PM</option>
+                        <option value="18:30">06:30 PM</option>
+                        <option value="19:00">07:00 PM</option>
+                        <option value="19:30">07:30 PM</option>
+                        <option value="20:00">08:00 PM</option>
+                      </select>
                     </div>
                   </div>
 
@@ -13907,6 +14545,8 @@ export default function App() {
                             sendEmail: true
                           });
                           pop('Screening call scheduled! Email sent to ' + selectedCandidate.email);
+                          // Refresh data to get latest state
+                          await refreshData(selectedCandidate.id);
                         } catch (error) {
                           console.error('Failed to save screening:', error);
                           pop('Screening scheduled but email may have failed');
@@ -15499,12 +16139,15 @@ export default function App() {
                     }
 
                     // Close modal and reset
+                    const candidateIdToRefresh = completingTask.candidateId;
                     setShowTaskCompleteModal(false);
                     setCompletingTask(null);
                     setTaskCompleteAction('complete_only');
                     setNextStageSelection('');
                     setAssignedTo(null);
                     setCommentText('');
+                    // Refresh data to get latest state
+                    await refreshData(candidateIdToRefresh);
                   }}
                   style={{
                     padding: '12px 24px',
@@ -15629,19 +16272,67 @@ export default function App() {
                         value={interviewForm.date}
                         onChange={e => setInterviewForm({ ...interviewForm, date: e.target.value })}
                         min={new Date().toISOString().split('T')[0]}
-                        style={{ ...styles.input, width: '100%' }}
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          borderRadius: 12,
+                          border: '2px solid #e2e8f0',
+                          fontSize: 15,
+                          boxSizing: 'border-box',
+                          outline: 'none',
+                          background: 'white',
+                          color: '#1e293b',
+                          minHeight: 48,
+                          cursor: 'pointer'
+                        }}
                       />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
                         Time *
                       </label>
-                      <input
-                        type="time"
+                      <select
                         value={interviewForm.time}
                         onChange={e => setInterviewForm({ ...interviewForm, time: e.target.value })}
-                        style={{ ...styles.input, width: '100%' }}
-                      />
+                        style={{
+                          width: '100%',
+                          padding: 14,
+                          borderRadius: 12,
+                          border: '2px solid #e2e8f0',
+                          fontSize: 15,
+                          boxSizing: 'border-box',
+                          outline: 'none',
+                          background: 'white',
+                          color: '#1e293b',
+                          minHeight: 48,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="">Select Time</option>
+                        <option value="09:00">09:00 AM</option>
+                        <option value="09:30">09:30 AM</option>
+                        <option value="10:00">10:00 AM</option>
+                        <option value="10:30">10:30 AM</option>
+                        <option value="11:00">11:00 AM</option>
+                        <option value="11:30">11:30 AM</option>
+                        <option value="12:00">12:00 PM</option>
+                        <option value="12:30">12:30 PM</option>
+                        <option value="13:00">01:00 PM</option>
+                        <option value="13:30">01:30 PM</option>
+                        <option value="14:00">02:00 PM</option>
+                        <option value="14:30">02:30 PM</option>
+                        <option value="15:00">03:00 PM</option>
+                        <option value="15:30">03:30 PM</option>
+                        <option value="16:00">04:00 PM</option>
+                        <option value="16:30">04:30 PM</option>
+                        <option value="17:00">05:00 PM</option>
+                        <option value="17:30">05:30 PM</option>
+                        <option value="18:00">06:00 PM</option>
+                        <option value="18:30">06:30 PM</option>
+                        <option value="19:00">07:00 PM</option>
+                        <option value="19:30">07:30 PM</option>
+                        <option value="20:00">08:00 PM</option>
+                      </select>
                     </div>
                   </div>
 
@@ -16128,14 +16819,6 @@ export default function App() {
                             }]
                           } : c));
 
-                          // Update selectedCandidate if it's the same person
-                          if (selectedCandidate?.id === interviewCandidate.id) {
-                            setSelectedCandidate(prev => ({
-                              ...prev,
-                              interviewRounds: [...(prev.interviewRounds || []), newInterview]
-                            }));
-                          }
-
                           pop(`✅ Interview scheduled! Email invitation sent to ${interviewCandidate.name} and ${interviewForm.interviewer}`);
                         }
                       } catch (error) {
@@ -16144,7 +16827,8 @@ export default function App() {
                         return;
                       }
 
-                      // Close modal
+                      // Close modal and reset form
+                      const candidateIdToRefresh = interviewCandidate.id;
                       setShowInterviewModal(false);
                       setInterviewCandidate(null);
                       setShowInterviewEmailPreview(false);
@@ -16161,6 +16845,8 @@ export default function App() {
                         notes: '',
                         isEditing: false
                       });
+                      // Refresh data to get latest state
+                      await refreshData(candidateIdToRefresh);
                     }}
                     style={{
                       ...styles.btn1,
@@ -16491,13 +17177,15 @@ export default function App() {
                     ));
 
                     // Close review modal and select assignment modal
+                    const candidateIdToRefresh = selectedCandidate.id;
                     setShowAssignmentReviewModal(false);
                     setAssignmentToReview(null);
                     setModal(null);
 
                     if (assignmentReviewForm.status === 'passed') {
-                      // Open interview scheduling modal
+                      // Refresh data and open interview scheduling modal
                       pop('✅ Assignment marked as passed! Now schedule the interview.');
+                      await refreshData(candidateIdToRefresh);
                       setInterviewCandidate(selectedCandidate);
                       setInterviewForm({
                         title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1}`,
@@ -16515,6 +17203,8 @@ export default function App() {
                       setShowInterviewModal(true);
                     } else {
                       pop('❌ Assignment rejected. Candidate moved to Rejected stage.');
+                      // Refresh data to get latest state
+                      await refreshData(candidateIdToRefresh);
                     }
                   } catch (error) {
                     console.error('Error updating assignment:', error);
@@ -16664,6 +17354,764 @@ export default function App() {
                 }}
               >
                 🗑️ Delete Assignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assignment Details Modal */}
+      {showAssignmentDetailsModal && assignmentToView && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: 20
+        }} onClick={() => { setShowAssignmentDetailsModal(false); setAssignmentToView(null); }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 20,
+            width: '100%',
+            maxWidth: 700,
+            maxHeight: '90vh',
+            overflow: 'hidden',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            animation: 'slideUp 0.3s ease'
+          }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              padding: '24px 28px',
+              color: 'white'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{
+                    width: 56,
+                    height: 56,
+                    background: 'rgba(255,255,255,0.2)',
+                    borderRadius: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 28
+                  }}>📝</div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{assignmentToView.name}</h2>
+                    <p style={{ margin: '6px 0 0', opacity: 0.85, fontSize: 14 }}>
+                      Created {assignmentToView.createdAt} by {assignmentToView.createdBy}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowAssignmentDetailsModal(false); setAssignmentToView(null); }}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: 10,
+                    color: 'white',
+                    fontSize: 18,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >×</button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: 28, maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}>
+              {/* Job Types */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Applicable Job Types
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {assignmentToView.jobTypes.map((jobType, idx) => (
+                    <span key={idx} style={{
+                      padding: '8px 16px',
+                      background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                      color: '#1e40af',
+                      borderRadius: 10,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      border: '1px solid #bfdbfe'
+                    }}>
+                      {jobType}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Instructions */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Instructions
+                </div>
+                <div style={{
+                  background: '#f8fafc',
+                  borderRadius: 12,
+                  padding: 20,
+                  border: '1px solid #e2e8f0'
+                }}>
+                  <div
+                    style={{ fontSize: 14, color: '#334155', lineHeight: 1.7 }}
+                    dangerouslySetInnerHTML={{ __html: assignmentToView.instructions || '<em>No instructions provided</em>' }}
+                  />
+                </div>
+              </div>
+
+              {/* Deadline */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Deadline
+                </div>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: '#fef3c7',
+                  padding: '10px 16px',
+                  borderRadius: 10,
+                  border: '1px solid #fde68a'
+                }}>
+                  <span style={{ fontSize: 18 }}>⏱️</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: '#92400e' }}>{assignmentToView.deadline}</span>
+                </div>
+              </div>
+
+              {/* Link */}
+              {assignmentToView.link && (
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Assignment Link
+                  </div>
+                  <a
+                    href={assignmentToView.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      background: '#f0fdf4',
+                      padding: '12px 18px',
+                      borderRadius: 10,
+                      border: '1px solid #86efac',
+                      color: '#166534',
+                      textDecoration: 'none',
+                      fontSize: 14,
+                      fontWeight: 500,
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span>🔗</span>
+                    <span style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {assignmentToView.link}
+                    </span>
+                    <span style={{ marginLeft: 4 }}>↗</span>
+                  </a>
+                </div>
+              )}
+
+              {/* Files */}
+              {assignmentToView.files && assignmentToView.files.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Attached Files ({assignmentToView.files.length})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {assignmentToView.files.map((file, idx) => (
+                      <div key={idx} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        background: '#f8fafc',
+                        padding: '12px 16px',
+                        borderRadius: 10,
+                        border: '1px solid #e2e8f0'
+                      }}>
+                        <span style={{
+                          width: 40,
+                          height: 40,
+                          background: '#eff6ff',
+                          borderRadius: 10,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 18
+                        }}>📎</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{file.name || file}</div>
+                          {file.type && <div style={{ fontSize: 12, color: '#64748b' }}>{file.type}</div>}
+                        </div>
+                        {file.url && (
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '8px 14px',
+                              background: '#6366f1',
+                              color: 'white',
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              textDecoration: 'none'
+                            }}
+                          >
+                            Download
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '16px 28px',
+              borderTop: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 12,
+              background: '#f8fafc'
+            }}>
+              <button
+                onClick={() => { setShowAssignmentDetailsModal(false); setAssignmentToView(null); }}
+                style={{
+                  padding: '12px 24px',
+                  background: 'white',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: '#64748b',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setShowAssignmentDetailsModal(false);
+                  setSelectedAssignment(assignmentToView);
+                  setAssignmentForm({
+                    name: assignmentToView.name,
+                    jobTypes: assignmentToView.jobTypes,
+                    instructions: assignmentToView.instructions,
+                    link: assignmentToView.link,
+                    files: assignmentToView.files,
+                    deadline: assignmentToView.deadline
+                  });
+                  setModal('createAssignment');
+                  setAssignmentToView(null);
+                }}
+                style={{
+                  padding: '12px 24px',
+                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  border: 'none',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: 'white',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}
+              >
+                ✏️ Edit Assignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send Offer Modal */}
+      {showOfferModal && offerCandidate && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: 20
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 16,
+            maxWidth: 800,
+            width: '100%',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '24px 32px',
+              borderBottom: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
+            }}>
+              <div>
+                <h2 style={{ fontSize: 20, fontWeight: 600, color: '#166534', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>{offerForm.editingOfferId ? '✏️' : '🎉'}</span> {offerForm.editingOfferId ? 'Edit & Resend Offer' : 'Send Job Offer'}
+                </h2>
+                <p style={{ fontSize: 14, color: '#15803d', margin: '4px 0 0' }}>
+                  {offerCandidate.name} - {offerCandidate.role}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowOfferModal(false);
+                  setOfferCandidate(null);
+                  setOfferFile(null);
+                }}
+                style={{
+                  background: 'white',
+                  border: 'none',
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  fontSize: 18,
+                  color: '#64748b'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '32px' }}>
+              {/* Offer Type Selection */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 12 }}>
+                  Offer Type
+                </label>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  {[
+                    { value: 'text', label: '📝 Text', desc: 'Type offer details directly' },
+                    { value: 'pdf', label: '📄 PDF', desc: 'Upload PDF offer letter' },
+                    { value: 'word', label: '📃 Word', desc: 'Upload Word document' }
+                  ].map(type => (
+                    <button
+                      key={type.value}
+                      onClick={() => setOfferForm({ ...offerForm, offerType: type.value })}
+                      style={{
+                        flex: 1,
+                        padding: '16px',
+                        border: offerForm.offerType === type.value ? '2px solid #10b981' : '2px solid #e5e7eb',
+                        borderRadius: 12,
+                        background: offerForm.offerType === type.value ? '#f0fdf4' : 'white',
+                        cursor: 'pointer',
+                        textAlign: 'center'
+                      }}
+                    >
+                      <div style={{ fontSize: 20, marginBottom: 4 }}>{type.label.split(' ')[0]}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: offerForm.offerType === type.value ? '#166534' : '#374151' }}>{type.label.split(' ')[1]}</div>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>{type.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Compensation Section */}
+              <div style={{ background: '#f8fafc', borderRadius: 12, padding: 20, marginBottom: 24 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>💰</span> Compensation Package
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 6 }}>
+                      Annual Salary (CTC) *
+                    </label>
+                    <input
+                      type="text"
+                      value={offerForm.salary}
+                      onChange={e => setOfferForm({ ...offerForm, salary: e.target.value })}
+                      placeholder="e.g. 12,00,000"
+                      style={{ ...styles.input, width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 6 }}>
+                      Currency
+                    </label>
+                    <select
+                      value={offerForm.salaryCurrency}
+                      onChange={e => setOfferForm({ ...offerForm, salaryCurrency: e.target.value })}
+                      style={{ ...styles.input, width: '100%' }}
+                    >
+                      <option value="INR">INR (₹)</option>
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 6 }}>
+                      Bonus
+                    </label>
+                    <input
+                      type="text"
+                      value={offerForm.bonus}
+                      onChange={e => setOfferForm({ ...offerForm, bonus: e.target.value })}
+                      placeholder="e.g. Performance bonus up to 15%"
+                      style={{ ...styles.input, width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#64748b', marginBottom: 6 }}>
+                      Equity/ESOP
+                    </label>
+                    <input
+                      type="text"
+                      value={offerForm.equity}
+                      onChange={e => setOfferForm({ ...offerForm, equity: e.target.value })}
+                      placeholder="e.g. 0.05% vesting over 4 years"
+                      style={{ ...styles.input, width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Benefits & Dates */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                    Benefits
+                  </label>
+                  <textarea
+                    value={offerForm.benefits}
+                    onChange={e => setOfferForm({ ...offerForm, benefits: e.target.value })}
+                    placeholder="Health insurance, meal allowance, learning budget..."
+                    rows={3}
+                    style={{ ...styles.input, width: '100%', resize: 'vertical' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                      Proposed Start Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={offerForm.startDate}
+                      onChange={e => setOfferForm({ ...offerForm, startDate: e.target.value })}
+                      min={new Date().toISOString().split('T')[0]}
+                      style={{ ...styles.input, width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                      Response Deadline
+                    </label>
+                    <input
+                      type="date"
+                      value={offerForm.expiryDate}
+                      onChange={e => setOfferForm({ ...offerForm, expiryDate: e.target.value })}
+                      min={new Date().toISOString().split('T')[0]}
+                      style={{ ...styles.input, width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Text Offer Content */}
+              {offerForm.offerType === 'text' && (
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                    Offer Letter Content
+                  </label>
+                  <textarea
+                    value={offerForm.offerContent}
+                    onChange={e => setOfferForm({ ...offerForm, offerContent: e.target.value })}
+                    placeholder="Enter the full offer letter content here. You can include details about the role, responsibilities, and any other terms..."
+                    rows={8}
+                    style={{ ...styles.input, width: '100%', resize: 'vertical', fontFamily: 'inherit' }}
+                  />
+                </div>
+              )}
+
+              {/* File Upload for PDF/Word */}
+              {(offerForm.offerType === 'pdf' || offerForm.offerType === 'word') && (
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                    Upload Offer Letter ({offerForm.offerType.toUpperCase()})
+                  </label>
+                  <div style={{
+                    border: '2px dashed #d1d5db',
+                    borderRadius: 12,
+                    padding: 32,
+                    textAlign: 'center',
+                    background: '#f9fafb',
+                    cursor: 'pointer'
+                  }}>
+                    <input
+                      type="file"
+                      accept={offerForm.offerType === 'pdf' ? '.pdf' : '.doc,.docx'}
+                      onChange={e => {
+                        if (e.target.files[0]) {
+                          setOfferFile(e.target.files[0]);
+                        }
+                      }}
+                      style={{ display: 'none' }}
+                      id="offer-file-upload"
+                    />
+                    <label htmlFor="offer-file-upload" style={{ cursor: 'pointer' }}>
+                      {offerFile ? (
+                        <div>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#10b981' }}>{offerFile.name}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>Click to change file</div>
+                        </div>
+                      ) : offerForm.existingFile?.url ? (
+                        <div>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📎</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#3b82f6' }}>{offerForm.existingFile.name || 'Existing offer letter'}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>Click to upload a new file (optional)</div>
+                          <a
+                            href={offerForm.existingFile.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            style={{ fontSize: 12, color: '#3b82f6', marginTop: 8, display: 'inline-block' }}
+                          >
+                            View current file
+                          </a>
+                        </div>
+                      ) : (
+                        <div>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>📤</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>Click to upload {offerForm.offerType.toUpperCase()} file</div>
+                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>or drag and drop</div>
+                        </div>
+                      )}
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Terms & Conditions */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#64748b', marginBottom: 8 }}>
+                  Terms & Conditions (Optional)
+                </label>
+                <textarea
+                  value={offerForm.termsAndConditions}
+                  onChange={e => setOfferForm({ ...offerForm, termsAndConditions: e.target.value })}
+                  placeholder="Any specific terms and conditions for this offer..."
+                  rows={3}
+                  style={{ ...styles.input, width: '100%', resize: 'vertical' }}
+                />
+              </div>
+
+              {/* Internal Notes */}
+              <div style={{ background: '#fef3c7', borderRadius: 12, padding: 16 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#92400e', marginBottom: 8 }}>
+                  🔒 Internal Notes (Not sent to candidate)
+                </label>
+                <textarea
+                  value={offerForm.internalNotes}
+                  onChange={e => setOfferForm({ ...offerForm, internalNotes: e.target.value })}
+                  placeholder="Any internal notes about this offer, negotiation history, etc..."
+                  rows={2}
+                  style={{ ...styles.input, width: '100%', resize: 'vertical', background: 'white' }}
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: '20px 32px',
+              borderTop: '1px solid #e2e8f0',
+              display: 'flex',
+              gap: 12,
+              justifyContent: 'flex-end',
+              background: '#f8fafc'
+            }}>
+              <button
+                onClick={() => {
+                  setShowOfferModal(false);
+                  setOfferCandidate(null);
+                  setOfferFile(null);
+                }}
+                style={{
+                  ...styles.btn2,
+                  padding: '12px 24px'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  // Validation
+                  if (!offerForm.salary) {
+                    pop('Please enter the salary');
+                    return;
+                  }
+                  if (!offerForm.startDate) {
+                    pop('Please select a start date');
+                    return;
+                  }
+                  // For PDF/Word offers, require file upload unless editing and existing file exists
+                  const hasExistingFile = offerForm.existingFile?.url;
+                  if (offerForm.offerType !== 'text' && !offerFile && !hasExistingFile) {
+                    pop(`Please upload the ${offerForm.offerType.toUpperCase()} offer letter`);
+                    return;
+                  }
+
+                  setSendingOffer(true);
+                  try {
+                    const isEditing = !!offerForm.editingOfferId;
+
+                    // Handle file upload if PDF/Word offer type
+                    let uploadedFile = null;
+                    if (offerForm.offerType !== 'text' && offerFile) {
+                      try {
+                        pop('Uploading offer letter...');
+                        console.log('Starting file upload:', offerFile.name, offerFile.type, offerFile.size);
+                        const uploadResult = await uploadAPI.uploadFile(offerFile);
+                        console.log('Upload result:', uploadResult);
+                        // API returns: { success, fileUrl, key, size, mimeType, originalName }
+                        if (uploadResult.success && uploadResult.fileUrl) {
+                          uploadedFile = {
+                            name: offerFile.name,
+                            url: uploadResult.fileUrl,
+                            key: uploadResult.key,
+                            type: offerFile.type
+                          };
+                          console.log('File uploaded successfully:', uploadedFile);
+                        } else {
+                          console.error('Upload response missing fileUrl:', uploadResult);
+                          throw new Error('Upload failed - no file URL returned');
+                        }
+                      } catch (uploadError) {
+                        console.error('File upload error:', uploadError);
+                        pop('Failed to upload offer letter file: ' + (uploadError.message || 'Please try again.'));
+                        setSendingOffer(false);
+                        return;
+                      }
+                    }
+
+                    // Determine which file to use: new upload > existing file > none
+                    const fileToUse = uploadedFile || (offerForm.existingFile?.url ? offerForm.existingFile : null);
+
+                    // Prepare offer data
+                    const offerData = {
+                      applicationId: offerCandidate.applicationId || offerCandidate.id,
+                      candidateId: offerCandidate.candidateId,
+                      candidateName: offerCandidate.name,
+                      candidateEmail: offerCandidate.email,
+                      jobId: offerCandidate.jobId,
+                      jobTitle: offerCandidate.role,
+                      department: offerCandidate.department,
+                      location: offerCandidate.location || 'Hyderabad',
+                      offerType: offerForm.offerType,
+                      salary: offerForm.salary,
+                      salaryCurrency: offerForm.salaryCurrency,
+                      bonus: offerForm.bonus,
+                      equity: offerForm.equity,
+                      benefits: offerForm.benefits,
+                      startDate: offerForm.startDate,
+                      expiryDate: offerForm.expiryDate,
+                      offerContent: offerForm.offerContent,
+                      termsAndConditions: offerForm.termsAndConditions,
+                      internalNotes: offerForm.internalNotes,
+                      sendEmail: true,
+                      // Include file info if available (new upload or existing)
+                      ...(fileToUse && { offerFile: fileToUse })
+                    };
+
+                    let response;
+                    if (isEditing) {
+                      // Update existing offer
+                      response = await fetch(`${API_BASE}/offers/${offerForm.editingOfferId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(offerData)
+                      });
+                    } else {
+                      // Create new offer
+                      response = await fetch(`${API_BASE}/offers`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(offerData)
+                      });
+                    }
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                      setShowOfferModal(false);
+                      setOfferCandidate(null);
+                      setOfferFile(null);
+                      pop(isEditing
+                        ? `✅ Offer updated and resent to ${offerCandidate.name}!`
+                        : `🎉 Offer sent successfully to ${offerCandidate.name}!`
+                      );
+                      // Refresh data to get latest state
+                      await refreshData(offerCandidate.id);
+                    } else {
+                      console.error('Offer API error:', result);
+                      pop(result.error || `Failed to ${isEditing ? 'update' : 'send'} offer`);
+                    }
+                  } catch (error) {
+                    console.error('Error sending offer:', error);
+                    pop('Failed to send offer: ' + (error.message || 'Please try again.'));
+                  } finally {
+                    setSendingOffer(false);
+                  }
+                }}
+                disabled={sendingOffer}
+                style={{
+                  background: sendingOffer ? '#9ca3af' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                  color: 'white',
+                  border: 'none',
+                  padding: '12px 32px',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: sendingOffer ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  boxShadow: sendingOffer ? 'none' : '0 4px 12px rgba(16, 185, 129, 0.3)'
+                }}
+              >
+                {sendingOffer ? (
+                  <>
+                    <span style={{ animation: 'spin 1s linear infinite' }}>⏳</span> {offerForm.editingOfferId ? 'Updating...' : 'Sending...'}
+                  </>
+                ) : (
+                  <>
+                    <span>📧</span> {offerForm.editingOfferId ? 'Update & Resend' : 'Send Offer'}
+                  </>
+                )}
               </button>
             </div>
           </div>

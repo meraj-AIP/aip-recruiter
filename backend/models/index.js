@@ -239,7 +239,7 @@ const userSchema = new Schema({
   company_id: { type: Schema.Types.ObjectId, ref: 'Company' },
   name: { type: String, required: true },
   email: { type: String, required: true, lowercase: true, unique: true },
-  password: { type: String, default: 'AIplanet@123' },
+  password: { type: String, required: true },
   role: { type: String, default: 'Recruiter', enum: ['Super Admin', 'Admin', 'HR Manager', 'HR', 'Recruiter', 'Hiring Manager', 'Viewer', 'admin', 'recruiter', 'hiring_manager', 'viewer'] },
   is_active: { type: Boolean, default: true },
 }, { timestamps: true });
@@ -338,6 +338,63 @@ const userRoleSchema = new Schema({
 }, { timestamps: true });
 
 // =====================================================
+// OFFER SCHEMA (Job offers sent to candidates)
+// =====================================================
+const offerSchema = new Schema({
+  application_id: { type: Schema.Types.ObjectId, ref: 'Application', required: true },
+  candidate_id: { type: Schema.Types.ObjectId, ref: 'Candidate' },
+  job_id: { type: Schema.Types.ObjectId, ref: 'JobOpening' },
+  company_id: { type: Schema.Types.ObjectId, ref: 'Company' },
+  // Candidate info (denormalized for quick access)
+  candidate_name: String,
+  candidate_email: String,
+  // Job info
+  job_title: String,
+  department: String,
+  location: String,
+  // Offer details
+  offer_type: { type: String, enum: ['text', 'pdf', 'word'], default: 'text' },
+  offer_content: String, // For text-based offers
+  offer_file: {
+    name: { type: String, default: '' },
+    url: { type: String, default: null },
+    key: { type: String, default: null },
+    type: { type: String, default: null }
+  },
+  // Compensation details
+  salary: String,
+  salary_currency: { type: String, default: 'INR' },
+  bonus: String,
+  equity: String,
+  benefits: String,
+  // Dates
+  start_date: Date,
+  expiry_date: Date, // Offer expiration date
+  // Status tracking
+  status: {
+    type: String,
+    default: 'draft',
+    enum: ['draft', 'sent', 'viewed', 'accepted', 'rejected', 'negotiating', 'expired', 'withdrawn']
+  },
+  sent_at: Date,
+  sent_by: String,
+  sent_by_id: { type: Schema.Types.ObjectId, ref: 'User' },
+  // Response tracking
+  response_date: Date,
+  response_notes: String,
+  // Negotiation history
+  negotiation_history: [{
+    date: { type: Date, default: Date.now },
+    action: String, // 'counter_offer', 'revised', 'accepted', 'rejected'
+    details: String,
+    by: String
+  }],
+  // Notes
+  internal_notes: String,
+  terms_and_conditions: String,
+}, { timestamps: true });
+
+// =====================================================
 // CREATE MODELS
 // =====================================================
 const Company = mongoose.model('Company', companySchema);
@@ -355,6 +412,7 @@ const TaskAssignment = mongoose.model('TaskAssignment', taskAssignmentSchema);
 const AssignmentTemplate = mongoose.model('AssignmentTemplate', assignmentTemplateSchema);
 const CandidateAssignment = mongoose.model('CandidateAssignment', candidateAssignmentSchema);
 const UserRole = mongoose.model('UserRole', userRoleSchema);
+const Offer = mongoose.model('Offer', offerSchema);
 
 module.exports = {
   Company,
@@ -372,4 +430,5 @@ module.exports = {
   AssignmentTemplate,
   CandidateAssignment,
   UserRole,
+  Offer,
 };

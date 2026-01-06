@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const { Interview, Application, ActivityLog } = require('../models');
+const emailService = require('../services/emailService');
 
 // GET /api/interviews - Get all interviews
 router.get('/', async (req, res) => {
@@ -153,8 +154,13 @@ router.post('/', async (req, res) => {
       meetingLink,
       address,
       interviewerName,
+      interviewerEmail,
       notes,
-      scheduledBy
+      scheduledBy,
+      sendEmail,
+      candidateName,
+      candidateEmail,
+      jobTitle
     } = req.body;
 
     if (!applicationId) {
@@ -201,6 +207,40 @@ router.post('/', async (req, res) => {
 
     console.log('✅ Interview scheduled:', interview._id);
 
+    // Send email if requested
+    let emailSent = false;
+    if (sendEmail && candidateEmail) {
+      try {
+        // Get candidate and job info if not provided
+        const application = await Application.findById(applicationId)
+          .populate('candidate_id', 'name email resume_url')
+          .populate('job_id', 'title')
+          .lean();
+
+        await emailService.sendInterviewEmails({
+          candidateName: candidateName || application?.candidate_id?.name || 'Candidate',
+          candidateEmail: candidateEmail || application?.candidate_id?.email,
+          jobTitle: jobTitle || application?.job_id?.title || 'the position',
+          interviewTitle: title,
+          scheduledDate,
+          scheduledTime,
+          durationMinutes: parseInt(durationMinutes) || 60,
+          locationType: locationType || 'online',
+          platform,
+          meetingLink,
+          address,
+          interviewerName,
+          interviewerEmail,
+          notes,
+          resumeUrl: application?.candidate_id?.resume_url
+        });
+        emailSent = true;
+        console.log('📧 Interview invitation emails sent');
+      } catch (emailError) {
+        console.error('Failed to send interview email:', emailError);
+      }
+    }
+
     res.status(201).json({
       success: true,
       data: {
@@ -209,8 +249,9 @@ router.post('/', async (req, res) => {
         scheduledDate: interview.scheduled_date,
         scheduledTime: interview.scheduled_time,
         status: interview.status,
+        emailSent
       },
-      message: 'Interview scheduled successfully'
+      message: emailSent ? 'Interview scheduled and invitations sent' : 'Interview scheduled successfully'
     });
   } catch (error) {
     console.error('Error creating interview:', error);

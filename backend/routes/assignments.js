@@ -5,7 +5,8 @@
 
 const express = require('express');
 const router = express.Router();
-const { AssignmentTemplate, CandidateAssignment, Application, ActivityLog } = require('../models');
+const { AssignmentTemplate, CandidateAssignment, Application, ActivityLog, JobOpening } = require('../models');
+const emailService = require('../services/emailService');
 
 // =====================================================
 // ASSIGNMENT TEMPLATES CRUD
@@ -401,6 +402,32 @@ router.post('/candidates', async (req, res) => {
 
     console.log('✅ Assignment sent to candidate:', assignment._id);
 
+    // Send email to candidate if email is provided
+    let emailSent = false;
+    if (candidateEmail) {
+      try {
+        // Get job title from application
+        const application = await Application.findById(applicationId).populate('job_id', 'title').lean();
+        const jobTitle = application?.job_id?.title || 'the position';
+
+        await emailService.sendAssignmentEmail({
+          candidateName: candidateName || 'Candidate',
+          candidateEmail,
+          jobTitle,
+          assignmentName,
+          instructions: instructions || '',
+          customInstructions: customInstructions || '',
+          link: link || '',
+          files: files || [],
+          deadlineDate
+        });
+        emailSent = true;
+        console.log('✅ Assignment email sent to:', candidateEmail);
+      } catch (emailError) {
+        console.error('Failed to send assignment email:', emailError);
+      }
+    }
+
     res.status(201).json({
       success: true,
       data: {
@@ -410,8 +437,9 @@ router.post('/candidates', async (req, res) => {
         assignmentName: assignment.assignment_name,
         deadlineDate: assignment.deadline_date,
         status: 'sent',
+        emailSent
       },
-      message: 'Assignment sent successfully'
+      message: emailSent ? 'Assignment sent successfully with email notification' : 'Assignment sent successfully'
     });
   } catch (error) {
     console.error('Error sending assignment to candidate:', error);

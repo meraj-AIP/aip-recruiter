@@ -28,6 +28,7 @@ const taskRoutes = require('./routes/tasks');
 const assignmentRoutes = require('./routes/assignments');
 const interviewRoutes = require('./routes/interviews');
 const roleRoutes = require('./routes/roles');
+const offerRoutes = require('./routes/offers');
 
 // Initialize Express app
 const app = express();
@@ -81,6 +82,7 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/interviews', interviewRoutes);
 app.use('/api/roles', roleRoutes);
+app.use('/api/offers', offerRoutes);
 
 // =====================================================
 // LOOKUPS API (Departments, Role Types, Work Setups)
