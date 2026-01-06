@@ -730,6 +730,9 @@ export default function App() {
   const [showInterviewPassConfirm, setShowInterviewPassConfirm] = useState(false);
   const [showInterviewFailConfirm, setShowInterviewFailConfirm] = useState(false);
   const [confirmInterviewData, setConfirmInterviewData] = useState(null); // { interview, candidate }
+  const [isProcessingInterviewResult, setIsProcessingInterviewResult] = useState(false);
+  const [showInterviewPassedSuccess, setShowInterviewPassedSuccess] = useState(false);
+  const [interviewPassedData, setInterviewPassedData] = useState(null); // { interview, candidate }
 
   // Pipeline view layout
   const [activeStage, setActiveStage] = useState('shortlisting');
@@ -824,6 +827,16 @@ export default function App() {
   const [showApplicationSuccess, setShowApplicationSuccess] = useState(false);
   const [submittedApplicationData, setSubmittedApplicationData] = useState(null);
   const [isSubmittingApplication, setIsSubmittingApplication] = useState(false);
+
+  // Assignment sending state
+  const [isSendingAssignment, setIsSendingAssignment] = useState(false);
+  const [showAssignmentSentSuccess, setShowAssignmentSentSuccess] = useState(false);
+  const [sentAssignmentData, setSentAssignmentData] = useState(null);
+
+  // Interview scheduling state
+  const [isSchedulingInterview, setIsSchedulingInterview] = useState(false);
+  const [showInterviewScheduledSuccess, setShowInterviewScheduledSuccess] = useState(false);
+  const [scheduledInterviewData, setScheduledInterviewData] = useState(null);
 
   // User roles for RBAC - fetched from database
   const [userRoles, setUserRoles] = useState([]);
@@ -1968,6 +1981,10 @@ export default function App() {
       pop('Please enter your email');
       return;
     }
+    if (!applicationForm.phone.trim()) {
+      pop('Please enter your phone number');
+      return;
+    }
     if (!applicationForm.resume) {
       pop('Please upload your resume');
       return;
@@ -2060,6 +2077,9 @@ export default function App() {
 
       if (response.success) {
         console.log('✅ Application submitted successfully:', response.data);
+
+        // Close preview modal
+        setShowApplicationPreview(false);
 
         // Store submission data for success modal (use saved job info)
         setSubmittedApplicationData({
@@ -2554,14 +2574,17 @@ export default function App() {
   };
 
   const confirmSendEmail = async () => {
-    if (!emailPreview || !selectedCandidate) return;
+    if (!emailPreview || !selectedCandidate || isSendingAssignment) return;
+
+    setIsSendingAssignment(true);
 
     try {
       // Calculate deadline days from the assignment deadline string
       const deadlineDays = parseInt(emailPreview.assignment.deadline) || 3;
+      const deadlineDate = new Date(Date.now() + deadlineDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
       // Send assignment to candidate via API
-      await assignmentsAPI.sendToCandidate({
+      const response = await assignmentsAPI.sendToCandidate({
         applicationId: selectedCandidate._original?.id || selectedCandidate.id,
         candidateId: selectedCandidate.candidateId || selectedCandidate._original?.candidate_id,
         candidateName: selectedCandidate.name,
@@ -2577,7 +2600,6 @@ export default function App() {
       });
 
       // Update candidate stage to assignment-sent in local state
-      const deadlineDate = new Date(Date.now() + deadlineDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       setPeople(people.map(p =>
         p.id === selectedCandidate.id
           ? {
@@ -2607,18 +2629,35 @@ export default function App() {
         status: 'sent'
       }, ...prev]);
 
-      // Reset states and close modal
+      // Store success data for the confirmation modal
+      setSentAssignmentData({
+        candidateName: selectedCandidate.name,
+        candidateEmail: selectedCandidate.email,
+        assignmentName: emailPreview.assignment.name,
+        deadline: deadlineDate,
+        deadlineDays: deadlineDays,
+        emailSent: response.emailSent !== false,
+        sentAt: new Date().toLocaleString('en-US', {
+          month: 'long', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', hour12: true
+        })
+      });
+
+      // Reset states and show success modal
       const candidateIdToRefresh = selectedCandidate.id;
       setModal(null);
       setEmailPreview(null);
       setSelectedAssignmentToSend(null);
       setCustomAssignmentInstructions('');
-      pop('✅ Assignment sent successfully to ' + selectedCandidate.name + '!');
+      setShowAssignmentSentSuccess(true);
+
       // Refresh data to get latest state
       await refreshData(candidateIdToRefresh);
     } catch (error) {
       console.error('Error sending assignment:', error);
       pop('Failed to send assignment. Please try again.');
+    } finally {
+      setIsSendingAssignment(false);
     }
   };
 
@@ -4106,6 +4145,10 @@ export default function App() {
                     pop('Please enter your email');
                     return;
                   }
+                  if (!applicationForm.phone.trim()) {
+                    pop('Please enter your phone number');
+                    return;
+                  }
                   if (!applicationForm.resume) {
                     pop('Please upload your resume');
                     return;
@@ -4191,8 +4234,42 @@ export default function App() {
               width: '100%',
               maxHeight: '90vh',
               overflow: 'auto',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              position: 'relative'
             }}>
+              {/* Loading Overlay */}
+              {isSubmittingApplication && (
+                <div style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'rgba(255,255,255,0.9)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 10,
+                  borderRadius: 20
+                }}>
+                  <div style={{
+                    width: 60,
+                    height: 60,
+                    border: '4px solid #e2e8f0',
+                    borderTopColor: '#44924c',
+                    borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                    marginBottom: 20
+                  }} />
+                  <h3 style={{ fontSize: 20, fontWeight: 600, color: '#1e293b', margin: '0 0 8px' }}>
+                    Submitting Your Application
+                  </h3>
+                  <p style={{ fontSize: 14, color: '#64748b', margin: 0, textAlign: 'center' }}>
+                    Please wait while we process your application...
+                  </p>
+                </div>
+              )}
               {/* Header */}
               <div style={{
                 padding: '24px 32px',
@@ -4315,32 +4392,35 @@ export default function App() {
                 background: '#f8fafc'
               }}>
                 <button
-                  onClick={() => setShowApplicationPreview(false)}
+                  onClick={() => !isSubmittingApplication && setShowApplicationPreview(false)}
+                  disabled={isSubmittingApplication}
                   style={{
                     flex: 1,
                     padding: '14px 24px',
                     background: 'white',
-                    color: '#64748b',
+                    color: isSubmittingApplication ? '#cbd5e1' : '#64748b',
                     border: '2px solid #e2e8f0',
                     borderRadius: 10,
                     fontSize: 15,
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: isSubmittingApplication ? 'not-allowed' : 'pointer',
+                    opacity: isSubmittingApplication ? 0.6 : 1
                   }}
                 >
                   ← Go Back & Edit
                 </button>
                 <button
                   onClick={() => {
-                    setShowApplicationPreview(false);
-                    submitApplication();
+                    if (!isSubmittingApplication) {
+                      submitApplication();
+                    }
                   }}
                   disabled={isSubmittingApplication}
                   style={{
                     flex: 1,
                     padding: '14px 24px',
                     background: isSubmittingApplication
-                      ? '#94a3b8'
+                      ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
                       : 'linear-gradient(135deg, #44924c, #2d6a33)',
                     color: 'white',
                     border: 'none',
@@ -4348,10 +4428,27 @@ export default function App() {
                     fontSize: 15,
                     fontWeight: 600,
                     cursor: isSubmittingApplication ? 'not-allowed' : 'pointer',
-                    opacity: isSubmittingApplication ? 0.7 : 1
+                    opacity: isSubmittingApplication ? 1 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10,
+                    transition: 'all 0.3s ease'
                   }}
                 >
-                  {isSubmittingApplication ? '⏳ Submitting...' : '✓ Confirm & Submit'}
+                  {isSubmittingApplication ? (
+                    <>
+                      <span style={{
+                        width: 18,
+                        height: 18,
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        borderTopColor: 'white',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite'
+                      }} />
+                      Submitting Application...
+                    </>
+                  ) : '✓ Confirm & Submit'}
                 </button>
               </div>
             </div>
@@ -13894,8 +13991,10 @@ export default function App() {
                   zIndex: 10000
                 }}
                 onClick={() => {
-                  setShowInterviewPassConfirm(false);
-                  setConfirmInterviewData(null);
+                  if (!isProcessingInterviewResult) {
+                    setShowInterviewPassConfirm(false);
+                    setConfirmInterviewData(null);
+                  }
                 }}
               >
                 <div
@@ -13944,16 +14043,20 @@ export default function App() {
                         setShowInterviewPassConfirm(false);
                         setConfirmInterviewData(null);
                       }}
+                      disabled={isProcessingInterviewResult}
                       style={{
                         ...styles.btn2,
                         flex: 1,
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        opacity: isProcessingInterviewResult ? 0.6 : 1,
+                        cursor: isProcessingInterviewResult ? 'not-allowed' : 'pointer'
                       }}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={async () => {
+                        setIsProcessingInterviewResult(true);
                         try {
                           const res = await fetch(`${API_BASE}/interviews/${confirmInterviewData.interview.id}/status`, {
                             method: 'PATCH',
@@ -13962,25 +14065,67 @@ export default function App() {
                           });
                           const data = await res.json();
                           if (data.success) {
-                            pop('✅ Interview marked as passed! You can now send an offer.');
-                            await refreshData(confirmInterviewData.candidate.id);
+                            // Update selectedCandidate immediately for UI refresh
+                            if (selectedCandidate && selectedCandidate.id === confirmInterviewData.candidate.id) {
+                              const updatedInterviews = (selectedCandidate.interviewRounds || []).map(i =>
+                                i.id === confirmInterviewData.interview.id ? { ...i, status: 'Completed' } : i
+                              );
+                              setSelectedCandidate({
+                                ...selectedCandidate,
+                                interviewRounds: updatedInterviews
+                              });
+                            }
+
+                            // Store data for success modal
+                            setInterviewPassedData({
+                              interview: confirmInterviewData.interview,
+                              candidate: confirmInterviewData.candidate
+                            });
+
+                            // Close confirm modal, show success modal
+                            setShowInterviewPassConfirm(false);
+                            setConfirmInterviewData(null);
+                            setShowInterviewPassedSuccess(true);
+
+                            // Refresh data in background
+                            refreshData(confirmInterviewData.candidate.id);
+                          } else {
+                            pop('Failed to update interview');
                           }
                         } catch (error) {
                           console.error('Error updating interview:', error);
                           pop('Failed to update interview');
                         }
-                        setShowInterviewPassConfirm(false);
-                        setConfirmInterviewData(null);
+                        setIsProcessingInterviewResult(false);
                       }}
+                      disabled={isProcessingInterviewResult}
                       style={{
                         ...styles.btn1,
                         flex: 1,
                         justifyContent: 'center',
                         background: 'linear-gradient(135deg, #10b981, #059669)',
-                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)'
+                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+                        opacity: isProcessingInterviewResult ? 0.8 : 1,
+                        cursor: isProcessingInterviewResult ? 'not-allowed' : 'pointer'
                       }}
                     >
-                      ✅ Yes, Mark as Passed
+                      {isProcessingInterviewResult ? (
+                        <>
+                          <span style={{
+                            display: 'inline-block',
+                            width: 16,
+                            height: 16,
+                            border: '2px solid rgba(255,255,255,0.3)',
+                            borderTopColor: 'white',
+                            borderRadius: '50%',
+                            animation: 'spin 0.8s linear infinite',
+                            marginRight: 8
+                          }} />
+                          Processing...
+                        </>
+                      ) : (
+                        '✅ Yes, Mark as Passed'
+                      )}
                     </button>
                   </div>
                 </div>
@@ -14528,7 +14673,7 @@ export default function App() {
 
                         // Persist to database and send email
                         try {
-                          await applicationsAPI.scheduleScreening(selectedCandidate.id, {
+                          const response = await applicationsAPI.scheduleScreening(selectedCandidate.id, {
                             date: formattedDate,
                             scheduledDate: screeningForm.date,
                             scheduledTime: screeningForm.time,
@@ -14544,12 +14689,16 @@ export default function App() {
                             jobTitle: selectedCandidate.role,
                             sendEmail: true
                           });
-                          pop('Screening call scheduled! Email sent to ' + selectedCandidate.email);
+                          if (response.emailSent) {
+                            pop('✅ Screening call scheduled! Invitation email sent to ' + selectedCandidate.email);
+                          } else {
+                            pop('Screening call scheduled (email could not be sent)');
+                          }
                           // Refresh data to get latest state
                           await refreshData(selectedCandidate.id);
                         } catch (error) {
                           console.error('Failed to save screening:', error);
-                          pop('Screening scheduled but email may have failed');
+                          pop('Failed to schedule screening call');
                         }
                       }}
                       style={{
@@ -15060,45 +15209,79 @@ export default function App() {
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   <button
                     onClick={confirmSendEmail}
+                    disabled={isSendingAssignment}
                     style={{
                       ...styles.btn1,
                       flex: 1,
                       minWidth: 200,
                       padding: '16px',
                       fontSize: 16,
-                      fontWeight: 600
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 10,
+                      background: isSendingAssignment
+                        ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                        : 'linear-gradient(135deg, #44924c 0%, #2d6a33 100%)',
+                      cursor: isSendingAssignment ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.3s ease'
                     }}
                   >
-                    {candidateAssignments.length > 0 ? '📤 Send Follow-up' : '✉️ Confirm & Send'}
+                    {isSendingAssignment ? (
+                      <>
+                        <span style={{
+                          width: 18,
+                          height: 18,
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          borderTopColor: 'white',
+                          borderRadius: '50%',
+                          animation: 'spin 0.8s linear infinite'
+                        }} />
+                        Sending Assignment...
+                      </>
+                    ) : (
+                      candidateAssignments.length > 0 ? '📤 Send Follow-up' : '✉️ Confirm & Send'
+                    )}
                   </button>
                   <button
                     onClick={() => {
-                      setModal('selectAssignment');
-                      setEmailPreview(null);
-                      fetchAssignmentsForCandidate(selectedCandidate);
+                      if (!isSendingAssignment) {
+                        setModal('selectAssignment');
+                        setEmailPreview(null);
+                        fetchAssignmentsForCandidate(selectedCandidate);
+                      }
                     }}
+                    disabled={isSendingAssignment}
                     style={{
                       ...styles.btn2,
                       padding: '16px 24px',
-                      fontSize: 16
+                      fontSize: 16,
+                      opacity: isSendingAssignment ? 0.5 : 1,
+                      cursor: isSendingAssignment ? 'not-allowed' : 'pointer'
                     }}
                   >
                     ← Back
                   </button>
                   <button
                     onClick={() => {
-                      setModal(null);
-                      setEmailPreview(null);
-                      setSelectedAssignmentToSend(null);
-                      setCustomAssignmentInstructions('');
+                      if (!isSendingAssignment) {
+                        setModal(null);
+                        setEmailPreview(null);
+                        setSelectedAssignmentToSend(null);
+                        setCustomAssignmentInstructions('');
+                      }
                     }}
+                    disabled={isSendingAssignment}
                     style={{
                       ...styles.btn2,
                       padding: '16px 24px',
                       fontSize: 16,
                       background: '#fef2f2',
                       color: '#dc2626',
-                      border: 'none'
+                      border: 'none',
+                      opacity: isSendingAssignment ? 0.5 : 1,
+                      cursor: isSendingAssignment ? 'not-allowed' : 'pointer'
                     }}
                   >
                     Cancel
@@ -16644,16 +16827,22 @@ export default function App() {
                   justifyContent: 'space-between'
                 }}>
                   <button
-                    onClick={() => setShowInterviewEmailPreview(false)}
+                    onClick={() => !isSchedulingInterview && setShowInterviewEmailPreview(false)}
+                    disabled={isSchedulingInterview}
                     style={{
                       ...styles.btn2,
-                      padding: '12px 24px'
+                      padding: '12px 24px',
+                      opacity: isSchedulingInterview ? 0.5 : 1,
+                      cursor: isSchedulingInterview ? 'not-allowed' : 'pointer'
                     }}
                   >
                     ← Back to Edit
                   </button>
                   <button
+                    disabled={isSchedulingInterview}
                     onClick={async () => {
+                      if (isSchedulingInterview) return;
+                      setIsSchedulingInterview(true);
                       try {
                         if (interviewForm.isEditing && interviewForm.editingInterviewId) {
                           // Update existing interview in database
@@ -16737,7 +16926,24 @@ export default function App() {
                             }));
                           }
 
-                          pop(`✅ Interview updated! New invitation sent to ${interviewCandidate.name} and ${interviewForm.interviewer}`);
+                          // Store success data for confirmation modal
+                          setScheduledInterviewData({
+                            isEditing: true,
+                            candidateName: interviewCandidate.name,
+                            candidateEmail: interviewCandidate.email,
+                            interviewTitle: interviewForm.title,
+                            interviewer: interviewForm.interviewer,
+                            scheduledDate: interviewForm.date,
+                            scheduledTime: interviewForm.time,
+                            duration: interviewForm.duration,
+                            locationType: interviewForm.locationType,
+                            platform: interviewForm.platform,
+                            meetingLink: interviewForm.meetingLink,
+                            sentAt: new Date().toLocaleString('en-US', {
+                              month: 'long', day: 'numeric', year: 'numeric',
+                              hour: 'numeric', minute: '2-digit', hour12: true
+                            })
+                          });
                         } else {
                           // Create new interview in database
                           const applicationId = interviewCandidate._original?.id || interviewCandidate.id;
@@ -16819,41 +17025,95 @@ export default function App() {
                             }]
                           } : c));
 
-                          pop(`✅ Interview scheduled! Email invitation sent to ${interviewCandidate.name} and ${interviewForm.interviewer}`);
+                          // Update selectedCandidate if it's the same person (for immediate UI update)
+                          if (selectedCandidate?.id === interviewCandidate.id) {
+                            setSelectedCandidate(prev => ({
+                              ...prev,
+                              stage: 'interview',
+                              interviewRounds: [...(prev.interviewRounds || []), newInterview]
+                            }));
+                          }
+
+                          // Store success data for confirmation modal
+                          setScheduledInterviewData({
+                            isEditing: false,
+                            candidateName: interviewCandidate.name,
+                            candidateEmail: interviewCandidate.email,
+                            interviewTitle: interviewForm.title,
+                            interviewer: interviewForm.interviewer,
+                            scheduledDate: interviewForm.date,
+                            scheduledTime: interviewForm.time,
+                            duration: interviewForm.duration,
+                            locationType: interviewForm.locationType,
+                            platform: interviewForm.platform,
+                            meetingLink: interviewForm.meetingLink,
+                            sentAt: new Date().toLocaleString('en-US', {
+                              month: 'long', day: 'numeric', year: 'numeric',
+                              hour: 'numeric', minute: '2-digit', hour12: true
+                            })
+                          });
                         }
+
+                        // Close modal and reset form
+                        const candidateIdToRefresh = interviewCandidate.id;
+                        setShowInterviewModal(false);
+                        setInterviewCandidate(null);
+                        setShowInterviewEmailPreview(false);
+                        setInterviewForm({
+                          title: '',
+                          date: '',
+                          time: '',
+                          interviewer: '',
+                          duration: '60',
+                          locationType: 'online',
+                          platform: 'Google Meet',
+                          meetingLink: '',
+                          address: '',
+                          notes: '',
+                          isEditing: false
+                        });
+
+                        // Show success modal
+                        setShowInterviewScheduledSuccess(true);
+
+                        // Refresh data to get latest state
+                        await refreshData(candidateIdToRefresh);
                       } catch (error) {
                         console.error('Error saving interview:', error);
                         pop('❌ Failed to save interview. Please try again.');
-                        return;
+                      } finally {
+                        setIsSchedulingInterview(false);
                       }
-
-                      // Close modal and reset form
-                      const candidateIdToRefresh = interviewCandidate.id;
-                      setShowInterviewModal(false);
-                      setInterviewCandidate(null);
-                      setShowInterviewEmailPreview(false);
-                      setInterviewForm({
-                        title: '',
-                        date: '',
-                        time: '',
-                        interviewer: '',
-                        duration: '60',
-                        locationType: 'online',
-                        platform: 'Google Meet',
-                        meetingLink: '',
-                        address: '',
-                        notes: '',
-                        isEditing: false
-                      });
-                      // Refresh data to get latest state
-                      await refreshData(candidateIdToRefresh);
                     }}
                     style={{
                       ...styles.btn1,
-                      padding: '12px 24px'
+                      padding: '12px 24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 10,
+                      background: isSchedulingInterview
+                        ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                        : 'linear-gradient(135deg, #44924c 0%, #2d6a33 100%)',
+                      cursor: isSchedulingInterview ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.3s ease'
                     }}
                   >
-                    {interviewForm.isEditing ? '📧 Update & Resend Invites' : '📧 Confirm & Send Invites'}
+                    {isSchedulingInterview ? (
+                      <>
+                        <span style={{
+                          width: 18,
+                          height: 18,
+                          border: '2px solid rgba(255,255,255,0.3)',
+                          borderTopColor: 'white',
+                          borderRadius: '50%',
+                          animation: 'spin 0.8s linear infinite'
+                        }} />
+                        {interviewForm.isEditing ? 'Updating Interview...' : 'Scheduling Interview...'}
+                      </>
+                    ) : (
+                      interviewForm.isEditing ? '📧 Update & Resend Invites' : '📧 Confirm & Send Invites'
+                    )}
                   </button>
                 </div>
               </>
@@ -18136,6 +18396,699 @@ export default function App() {
         }}>
           <span style={{ color: '#10b981', fontSize: 18 }}>✓</span>
           <span style={{ fontSize: 14, fontWeight: 500 }}>{toast}</span>
+        </div>
+      )}
+
+      {/* Assignment Sent Success Modal */}
+      {showAssignmentSentSuccess && sentAssignmentData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: 20
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 24,
+            maxWidth: 520,
+            width: '100%',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.3)',
+            overflow: 'hidden',
+            animation: 'slideUp 0.4s ease'
+          }}>
+            {/* Success Header */}
+            <div style={{
+              padding: '40px 32px 32px',
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              textAlign: 'center',
+              color: 'white',
+              position: 'relative'
+            }}>
+              <div style={{
+                width: 80,
+                height: 80,
+                background: 'white',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 20px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.15)'
+              }}>
+                <span style={{ fontSize: 40 }}>✅</span>
+              </div>
+              <h2 style={{
+                fontSize: 26,
+                fontWeight: 700,
+                margin: '0 0 8px'
+              }}>
+                Assignment Sent Successfully!
+              </h2>
+              <p style={{
+                fontSize: 15,
+                margin: 0,
+                opacity: 0.9
+              }}>
+                {sentAssignmentData.candidateName} has been notified
+              </p>
+            </div>
+
+            {/* Success Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Email Status */}
+              <div style={{
+                padding: 16,
+                background: sentAssignmentData.emailSent ? '#f0fdf4' : '#fef3c7',
+                border: `2px solid ${sentAssignmentData.emailSent ? '#86efac' : '#fde68a'}`,
+                borderRadius: 12,
+                marginBottom: 20,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12
+              }}>
+                <div style={{
+                  width: 44,
+                  height: 44,
+                  background: sentAssignmentData.emailSent ? '#dcfce7' : '#fef9c3',
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22
+                }}>
+                  {sentAssignmentData.emailSent ? '📧' : '⚠️'}
+                </div>
+                <div>
+                  <div style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: sentAssignmentData.emailSent ? '#166534' : '#92400e'
+                  }}>
+                    {sentAssignmentData.emailSent ? 'Email Delivered Successfully' : 'Email Could Not Be Sent'}
+                  </div>
+                  <div style={{
+                    fontSize: 13,
+                    color: sentAssignmentData.emailSent ? '#15803d' : '#a16207',
+                    marginTop: 2
+                  }}>
+                    {sentAssignmentData.emailSent
+                      ? `Sent to ${sentAssignmentData.candidateEmail}`
+                      : 'Please follow up manually with the candidate'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Assignment Details */}
+              <div style={{
+                background: '#f8fafc',
+                borderRadius: 12,
+                padding: 20,
+                marginBottom: 20
+              }}>
+                <h4 style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#64748b',
+                  margin: '0 0 16px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  Assignment Details
+                </h4>
+                <div style={{ display: 'grid', gap: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Assignment:</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{sentAssignmentData.assignmentName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Candidate:</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{sentAssignmentData.candidateName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Deadline:</span>
+                    <span style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      padding: '4px 10px',
+                      background: '#fef3c7',
+                      color: '#92400e',
+                      borderRadius: 6
+                    }}>
+                      {new Date(sentAssignmentData.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} ({sentAssignmentData.deadlineDays} days)
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Sent at:</span>
+                    <span style={{ fontSize: 14, color: '#1e293b' }}>{sentAssignmentData.sentAt}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Next Steps */}
+              <div style={{
+                padding: 16,
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: 12,
+                marginBottom: 24
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>💡</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e40af', marginBottom: 4 }}>Next Steps</div>
+                    <div style={{ fontSize: 13, color: '#3b82f6', lineHeight: 1.5 }}>
+                      The candidate's stage has been updated to "Assignment Sent". You can track their progress and mark the assignment as completed once submitted.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <button
+                onClick={() => {
+                  setShowAssignmentSentSuccess(false);
+                  setSentAssignmentData(null);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '16px 24px',
+                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 12,
+                  fontSize: 16,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  transition: 'transform 0.2s, box-shadow 0.2s'
+                }}
+                onMouseOver={e => {
+                  e.target.style.transform = 'translateY(-2px)';
+                  e.target.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
+                }}
+                onMouseOut={e => {
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = 'none';
+                }}
+              >
+                <span>✓</span> Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interview Scheduled Success Modal */}
+      {showInterviewScheduledSuccess && scheduledInterviewData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 20,
+            width: '90%',
+            maxWidth: 520,
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+            overflow: 'hidden',
+            animation: 'slideUp 0.4s ease-out'
+          }}>
+            {/* Success Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+              padding: '32px 32px 28px',
+              textAlign: 'center',
+              color: 'white'
+            }}>
+              <div style={{
+                width: 72,
+                height: 72,
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+                fontSize: 36,
+                animation: 'pulse 2s infinite'
+              }}>
+                📅
+              </div>
+              <h2 style={{
+                fontSize: 24,
+                fontWeight: 700,
+                margin: '0 0 8px'
+              }}>
+                {scheduledInterviewData.isUpdate ? 'Interview Updated!' : 'Interview Scheduled!'}
+              </h2>
+              <p style={{
+                fontSize: 15,
+                margin: 0,
+                opacity: 0.9
+              }}>
+                {scheduledInterviewData.candidateName} has been notified
+              </p>
+            </div>
+
+            {/* Success Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Email Status */}
+              <div style={{
+                padding: 16,
+                background: scheduledInterviewData.emailSent ? '#f0fdf4' : '#fef3c7',
+                border: `2px solid ${scheduledInterviewData.emailSent ? '#86efac' : '#fde68a'}`,
+                borderRadius: 12,
+                marginBottom: 20,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12
+              }}>
+                <div style={{
+                  width: 44,
+                  height: 44,
+                  background: scheduledInterviewData.emailSent ? '#dcfce7' : '#fef9c3',
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22
+                }}>
+                  {scheduledInterviewData.emailSent ? '📧' : '⚠️'}
+                </div>
+                <div>
+                  <div style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: scheduledInterviewData.emailSent ? '#166534' : '#92400e'
+                  }}>
+                    {scheduledInterviewData.emailSent ? 'Interview Invites Sent Successfully' : 'Email Could Not Be Sent'}
+                  </div>
+                  <div style={{
+                    fontSize: 13,
+                    color: scheduledInterviewData.emailSent ? '#15803d' : '#a16207',
+                    marginTop: 2
+                  }}>
+                    {scheduledInterviewData.emailSent
+                      ? `Candidate and interviewer have been notified`
+                      : 'Please follow up manually with the participants'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Interview Details */}
+              <div style={{
+                background: '#f8fafc',
+                borderRadius: 12,
+                padding: 20,
+                marginBottom: 20
+              }}>
+                <h4 style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#64748b',
+                  margin: '0 0 16px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  Interview Details
+                </h4>
+                <div style={{ display: 'grid', gap: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Interview:</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{scheduledInterviewData.interviewTitle}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Candidate:</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{scheduledInterviewData.candidateName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Interviewer:</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{scheduledInterviewData.interviewerName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Date & Time:</span>
+                    <span style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      padding: '4px 10px',
+                      background: '#ede9fe',
+                      color: '#6d28d9',
+                      borderRadius: 6
+                    }}>
+                      {scheduledInterviewData.scheduledDateTime}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Duration:</span>
+                    <span style={{ fontSize: 14, color: '#1e293b' }}>{scheduledInterviewData.duration} minutes</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, color: '#64748b' }}>Type:</span>
+                    <span style={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      padding: '4px 10px',
+                      background: scheduledInterviewData.interviewType === 'online' ? '#dbeafe' : '#fef3c7',
+                      color: scheduledInterviewData.interviewType === 'online' ? '#1d4ed8' : '#92400e',
+                      borderRadius: 6
+                    }}>
+                      {scheduledInterviewData.interviewType === 'online' ? '🎥 Online' : '🏢 In-Person'}
+                    </span>
+                  </div>
+                  {scheduledInterviewData.location && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: 14, color: '#64748b' }}>
+                        {scheduledInterviewData.interviewType === 'online' ? 'Platform:' : 'Location:'}
+                      </span>
+                      <span style={{ fontSize: 14, color: '#1e293b', textAlign: 'right', maxWidth: '60%' }}>
+                        {scheduledInterviewData.location}
+                      </span>
+                    </div>
+                  )}
+                  {scheduledInterviewData.meetingLink && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 14, color: '#64748b' }}>Meeting Link:</span>
+                      <a
+                        href={scheduledInterviewData.meetingLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: 13,
+                          color: '#6366f1',
+                          fontWeight: 500,
+                          textDecoration: 'none',
+                          padding: '4px 10px',
+                          background: '#eef2ff',
+                          borderRadius: 6
+                        }}
+                      >
+                        🔗 Join Meeting
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Next Steps */}
+              <div style={{
+                padding: 16,
+                background: '#f5f3ff',
+                border: '1px solid #ddd6fe',
+                borderRadius: 12,
+                marginBottom: 24
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>💡</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#6d28d9', marginBottom: 4 }}>Next Steps</div>
+                    <div style={{ fontSize: 13, color: '#7c3aed', lineHeight: 1.5 }}>
+                      The candidate's stage has been updated to "Interview". After the interview, use the Pass/Fail options to record the outcome and move them forward in the pipeline.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <button
+                onClick={() => {
+                  setShowInterviewScheduledSuccess(false);
+                  setScheduledInterviewData(null);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '16px 24px',
+                  background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 12,
+                  fontSize: 16,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  transition: 'transform 0.2s, box-shadow 0.2s'
+                }}
+                onMouseOver={e => {
+                  e.target.style.transform = 'translateY(-2px)';
+                  e.target.style.boxShadow = '0 8px 20px rgba(139, 92, 246, 0.4)';
+                }}
+                onMouseOut={e => {
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = 'none';
+                }}
+              >
+                <span>✓</span> Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interview Passed Success Modal with Send Offer Option */}
+      {showInterviewPassedSuccess && interviewPassedData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 24,
+            width: '90%',
+            maxWidth: 520,
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+            overflow: 'hidden',
+            animation: 'slideUp 0.4s ease-out'
+          }}>
+            {/* Success Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              padding: '36px 32px 32px',
+              textAlign: 'center',
+              color: 'white'
+            }}>
+              <div style={{
+                width: 80,
+                height: 80,
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 20px',
+                fontSize: 40,
+                animation: 'pulse 2s infinite'
+              }}>
+                🎉
+              </div>
+              <h2 style={{
+                fontSize: 26,
+                fontWeight: 700,
+                margin: '0 0 8px'
+              }}>
+                Interview Passed!
+              </h2>
+              <p style={{
+                fontSize: 16,
+                margin: 0,
+                opacity: 0.95
+              }}>
+                <strong>{interviewPassedData.candidate?.name}</strong> passed the interview
+              </p>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Interview Summary */}
+              <div style={{
+                background: '#f0fdf4',
+                border: '2px solid #86efac',
+                borderRadius: 14,
+                padding: 18,
+                marginBottom: 24
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginBottom: 12
+                }}>
+                  <div style={{
+                    width: 40,
+                    height: 40,
+                    background: '#dcfce7',
+                    borderRadius: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 20
+                  }}>
+                    ✅
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#166534' }}>
+                      {interviewPassedData.interview?.title || 'Interview'}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#15803d' }}>
+                      Completed on {interviewPassedData.interview?.date ? new Date(interviewPassedData.interview.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 13,
+                  color: '#047857',
+                  background: '#dcfce7',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  lineHeight: 1.5
+                }}>
+                  The candidate has successfully passed this interview round and is now ready to receive an offer.
+                </div>
+              </div>
+
+              {/* Action Prompt */}
+              <div style={{
+                background: 'linear-gradient(135deg, #fef3c7, #fde68a)',
+                border: '2px solid #fbbf24',
+                borderRadius: 14,
+                padding: 20,
+                marginBottom: 24,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
+                <div style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: '#92400e',
+                  marginBottom: 8
+                }}>
+                  Ready to Send an Offer?
+                </div>
+                <div style={{
+                  fontSize: 14,
+                  color: '#a16207',
+                  lineHeight: 1.5
+                }}>
+                  The candidate is now in the offer stage. You can send them an offer letter with salary details, benefits, and start date.
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => {
+                    setShowInterviewPassedSuccess(false);
+                    setInterviewPassedData(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '16px 20px',
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => {
+                    e.target.style.background = '#e2e8f0';
+                    e.target.style.borderColor = '#cbd5e1';
+                  }}
+                  onMouseOut={e => {
+                    e.target.style.background = '#f1f5f9';
+                    e.target.style.borderColor = '#e2e8f0';
+                  }}
+                >
+                  Maybe Later
+                </button>
+                <button
+                  onClick={() => {
+                    // Close success modal
+                    setShowInterviewPassedSuccess(false);
+                    setInterviewPassedData(null);
+
+                    // Set up offer modal for this candidate
+                    setOfferCandidate(interviewPassedData.candidate);
+                    setOfferForm({
+                      offerType: 'pdf',
+                      salary: '',
+                      salaryCurrency: 'INR',
+                      bonus: '',
+                      equity: '',
+                      benefits: '',
+                      startDate: '',
+                      expiryDate: '',
+                      offerContent: '',
+                      editingOfferId: null
+                    });
+                    setOfferFile(null);
+                    setShowOfferModal(true);
+                  }}
+                  style={{
+                    flex: 1.5,
+                    padding: '16px 20px',
+                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 15px rgba(245, 158, 11, 0.4)',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => {
+                    e.target.style.transform = 'translateY(-2px)';
+                    e.target.style.boxShadow = '0 8px 25px rgba(245, 158, 11, 0.5)';
+                  }}
+                  onMouseOut={e => {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = '0 4px 15px rgba(245, 158, 11, 0.4)';
+                  }}
+                >
+                  <span>🎁</span> Send Offer Now
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

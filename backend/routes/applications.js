@@ -330,8 +330,8 @@ router.post('/public-apply', async (req, res) => {
       referral_source, graduation_year, availability, notice_period, motivation
     } = req.body;
 
-    if (!name || !email || !job_id) {
-      return res.status(400).json({ error: 'Missing required fields: name, email, job_id' });
+    if (!name || !email || !phone || !job_id) {
+      return res.status(400).json({ error: 'Missing required fields: name, email, phone, job_id' });
     }
 
     // Get company_id from job if not provided
@@ -429,6 +429,28 @@ router.post('/public-apply', async (req, res) => {
       jobId: job_id,
       candidateName: name
     });
+
+    // Send application confirmation email
+    (async () => {
+      try {
+        const jobDetails = await JobOpening.findById(job_id)
+          .populate('department_id', 'name')
+          .lean();
+
+        await emailService.sendApplicationReceived(
+          { name, email },
+          {
+            title: jobDetails?.title || 'the position',
+            department: jobDetails?.department_id?.name || '',
+            location: jobDetails?.location || 'Remote'
+          },
+          referenceNumber
+        );
+        console.log('📧 Application confirmation email sent to:', email);
+      } catch (emailError) {
+        console.error('❌ Failed to send application confirmation email:', emailError.message);
+      }
+    })();
 
     // Auto-run AI scoring in background
     if (resume_text) {
@@ -938,6 +960,7 @@ router.post('/:id/schedule-screening', async (req, res) => {
     }).save();
 
     // Send email if requested
+    let emailSent = false;
     if (sendEmail) {
       try {
         // Send screening invitation email
@@ -955,6 +978,7 @@ router.post('/:id/schedule-screening', async (req, res) => {
           agenda
         });
 
+        emailSent = true;
         console.log('📧 Screening invitation email sent to', candidateEmail || application.candidate_id?.email);
       } catch (emailError) {
         console.error('Failed to send screening email:', emailError);
@@ -967,7 +991,10 @@ router.post('/:id/schedule-screening', async (req, res) => {
     res.json({
       success: true,
       data: { ...application.toObject(), id: application._id },
-      message: 'Screening call scheduled successfully'
+      emailSent,
+      message: emailSent
+        ? 'Screening call scheduled and invitation email sent successfully'
+        : 'Screening call scheduled successfully'
     });
   } catch (error) {
     console.error('Error scheduling screening call:', error);

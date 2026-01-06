@@ -4,7 +4,25 @@
 
 const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcrypt');
 const { User } = require('../models');
+
+const SALT_ROUNDS = 10;
+
+// Helper function to hash password
+async function hashPassword(password) {
+  return await bcrypt.hash(password, SALT_ROUNDS);
+}
+
+// Helper function to verify password
+async function verifyPassword(plainPassword, hashedPassword) {
+  // Check if password is already hashed (bcrypt hashes start with $2)
+  if (hashedPassword && hashedPassword.startsWith('$2')) {
+    return await bcrypt.compare(plainPassword, hashedPassword);
+  }
+  // Fallback for plain text passwords (legacy) - also hash and update
+  return plainPassword === hashedPassword;
+}
 
 // GET /api/users - Get all users/admins
 router.get('/', async (req, res) => {
@@ -73,10 +91,14 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
+    // Hash the password before storing
+    const plainPassword = password || process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!';
+    const hashedPassword = await hashPassword(plainPassword);
+
     const user = new User({
       name,
       email: email.toLowerCase(),
-      password: password || process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!', // Default password from env
+      password: hashedPassword,
       role: role || 'recruiter',
       company_id: company_id || null,
       is_active: true
@@ -110,6 +132,11 @@ router.put('/:id', async (req, res) => {
     if (updateData.status !== undefined) {
       updateData.is_active = updateData.status === 'Active';
       delete updateData.status;
+    }
+
+    // Hash password if it's being updated
+    if (updateData.password) {
+      updateData.password = await hashPassword(updateData.password);
     }
 
     const user = await User.findByIdAndUpdate(
@@ -187,27 +214,37 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).lean();
+    const user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Simple password check (in production, use bcrypt)
-    if (user.password !== password) {
+    // Verify password using bcrypt
+    const isValidPassword = await verifyPassword(password, user.password);
+
+    if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // If password was plain text (legacy), update to hashed version
+    if (user.password && !user.password.startsWith('$2')) {
+      const hashedPassword = await hashPassword(password);
+      await User.findByIdAndUpdate(user._id, { password: hashedPassword });
+      console.log('🔐 Upgraded plain text password to bcrypt hash for user:', user.email);
     }
 
     if (!user.is_active) {
       return res.status(403).json({ error: 'Account is inactive. Contact administrator.' });
     }
 
+    const userData = user.toObject();
     res.json({
       success: true,
       data: {
-        ...user,
-        id: user._id,
-        status: user.is_active ? 'Active' : 'Inactive'
+        ...userData,
+        id: userData._id,
+        status: userData.is_active ? 'Active' : 'Inactive'
       }
     });
   } catch (error) {
@@ -228,10 +265,13 @@ router.post('/seed', async (req, res) => {
       return res.json({ success: true, message: 'Super admin already exists', data: existingAdmin });
     }
 
+    // Hash the admin password
+    const hashedPassword = await hashPassword(adminPassword);
+
     const superAdmin = new User({
       name: 'Admin',
       email: adminEmail,
-      password: adminPassword,
+      password: hashedPassword,
       role: 'Super Admin',
       is_active: true
     });
@@ -248,6 +288,76 @@ router.post('/seed', async (req, res) => {
   } catch (error) {
     console.error('Error seeding super admin:', error);
     res.status(500).json({ error: 'Failed to seed super admin' });
+  }
+});
+
+// POST /api/users/migrate-passwords - Migrate all plain text passwords to bcrypt
+router.post('/migrate-passwords', async (req, res) => {
+  try {
+    // Find all users with plain text passwords (not starting with $2)
+    const users = await User.find({});
+    let migratedCount = 0;
+
+    for (const user of users) {
+      // Check if password is plain text (not bcrypt hash)
+      if (user.password && !user.password.startsWith('$2')) {
+        const hashedPassword = await hashPassword(user.password);
+        await User.findByIdAndUpdate(user._id, { password: hashedPassword });
+        migratedCount++;
+        console.log('🔐 Migrated password for user:', user.email);
+      }
+    }
+
+    console.log(`✅ Password migration completed: ${migratedCount} users updated`);
+
+    res.json({
+      success: true,
+      message: `Password migration completed: ${migratedCount} users updated`,
+      migratedCount
+    });
+  } catch (error) {
+    console.error('Error migrating passwords:', error);
+    res.status(500).json({ error: 'Failed to migrate passwords' });
+  }
+});
+
+// PUT /api/users/:id/password - Update user password
+router.put('/:id/password', async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!newPassword) {
+      return res.status(400).json({ error: 'New password is required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // If current password provided, verify it
+    if (currentPassword) {
+      const isValid = await verifyPassword(currentPassword, user.password);
+      if (!isValid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+    }
+
+    // Hash the new password
+    const hashedPassword = await hashPassword(newPassword);
+    await User.findByIdAndUpdate(req.params.id, { password: hashedPassword });
+
+    console.log('🔐 Password updated for user:', user.email);
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Error updating password:', error);
+    res.status(500).json({ error: 'Failed to update password' });
   }
 });
 
