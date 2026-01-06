@@ -734,6 +734,12 @@ export default function App() {
   const [showInterviewPassedSuccess, setShowInterviewPassedSuccess] = useState(false);
   const [interviewPassedData, setInterviewPassedData] = useState(null); // { interview, candidate }
 
+  // Hire confirmation modal
+  const [showHireConfirmModal, setShowHireConfirmModal] = useState(false);
+  const [isProcessingHire, setIsProcessingHire] = useState(false);
+  const [showHireSuccessModal, setShowHireSuccessModal] = useState(false);
+  const [hiredCandidateData, setHiredCandidateData] = useState(null);
+
   // Pipeline view layout
   const [activeStage, setActiveStage] = useState('shortlisting');
   const [pipelineLayout, setPipelineLayout] = useState('tabs'); // 'tabs' | 'kanban'
@@ -13528,14 +13534,18 @@ export default function App() {
                           )}
                           {selectedCandidate.stage === 'offer-accepted' && (
                             <button
-                              onClick={async () => {
-                                pop('🎉 Onboarding started for ' + selectedCandidate.name);
-                                // Refresh data to get latest state
-                                await refreshData(selectedCandidate.id);
+                              onClick={() => setShowHireConfirmModal(true)}
+                              style={{
+                                ...styles.btn1,
+                                justifyContent: 'center',
+                                padding: '12px 16px',
+                                background: 'linear-gradient(135deg, #10b981, #059669)',
+                                fontSize: 14,
+                                fontWeight: 600,
+                                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
                               }}
-                              style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}
                             >
-                              📋 Prepare Onboarding
+                              🎉 Confirm Hire & Start Onboarding
                             </button>
                           )}
                         </div>
@@ -13702,56 +13712,84 @@ export default function App() {
                       {/* Move & Final Actions */}
                       <div style={{ ...styles.box, padding: 16 }}>
                         <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          Pipeline Actions
+                          {selectedCandidate.stage === 'offer-accepted' ? 'Final Decision' : 'Pipeline Actions'}
                         </h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {selectedCandidate.stage !== 'hired' && selectedCandidate.stage !== 'rejected' && (
-                            <button
-                              onClick={() => { setModal('assignTask'); setAssignedTo(null); setCommentText(''); }}
-                              style={{ ...styles.btn1, justifyContent: 'center', padding: '12px', background: 'linear-gradient(135deg, #44924c, #2d6a33)' }}
-                            >
-                              ➡️ Move to Next Stage
-                            </button>
-                          )}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleHotApplicant(selectedCandidate.id); setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant}); }}
-                            style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef3c7', color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706', border: 'none' }}
-                          >
-                            {selectedCandidate.isHotApplicant ? '❄️ Remove from Hot' : '🔥 Mark as Hot Applicant'}
-                          </button>
-                          {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
-                            <button onClick={() => setShowRejectConfirm(true)} style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#fef2f2', color: '#ef4444', border: 'none' }}>
-                              ❌ Reject Candidate
-                            </button>
-                          )}
-                          {selectedCandidate.stage === 'hired' && (
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 8,
-                              padding: '12px 16px',
-                              background: 'linear-gradient(135deg, #10b981, #059669)',
-                              color: 'white',
-                              borderRadius: 10,
-                              fontSize: 14,
-                              fontWeight: 600
-                            }}>
-                              ✅ Successfully Hired
-                            </div>
-                          )}
-                          {/* Revert Stage Button - Only show if not in first stage and not hired */}
-                          {selectedCandidate.stage !== 'shortlisting' && selectedCandidate.stage !== 'hired' && (
-                            <button
-                              onClick={() => {
-                                setShowRevertStageModal(true);
-                                setRevertReason('');
-                                setRevertTargetStage('');
-                              }}
-                              style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#f0f9ff', color: '#0369a1', border: '1px solid #bae6fd' }}
-                            >
-                              ⏪ Revert to Previous Stage
-                            </button>
+                          {/* For offer-accepted: Show only Hire and Reject options */}
+                          {selectedCandidate.stage === 'offer-accepted' ? (
+                            <>
+                              <button
+                                onClick={() => setShowHireConfirmModal(true)}
+                                style={{
+                                  ...styles.btn1,
+                                  justifyContent: 'center',
+                                  padding: '14px 16px',
+                                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                                }}
+                              >
+                                ✅ Confirm Hire
+                              </button>
+                              <button
+                                onClick={() => setShowRejectConfirm(true)}
+                                style={{ ...styles.btn2, justifyContent: 'center', padding: '12px', background: '#fef2f2', color: '#ef4444', border: 'none', fontSize: 13 }}
+                              >
+                                ❌ Reject Candidate
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {selectedCandidate.stage !== 'hired' && selectedCandidate.stage !== 'rejected' && (
+                                <button
+                                  onClick={() => { setModal('assignTask'); setAssignedTo(null); setCommentText(''); }}
+                                  style={{ ...styles.btn1, justifyContent: 'center', padding: '12px', background: 'linear-gradient(135deg, #44924c, #2d6a33)' }}
+                                >
+                                  ➡️ Move to Next Stage
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleHotApplicant(selectedCandidate.id); setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant}); }}
+                                style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef3c7', color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706', border: 'none' }}
+                              >
+                                {selectedCandidate.isHotApplicant ? '❄️ Remove from Hot' : '🔥 Mark as Hot Applicant'}
+                              </button>
+                              {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
+                                <button onClick={() => setShowRejectConfirm(true)} style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#fef2f2', color: '#ef4444', border: 'none' }}>
+                                  ❌ Reject Candidate
+                                </button>
+                              )}
+                              {selectedCandidate.stage === 'hired' && (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  padding: '12px 16px',
+                                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                                  color: 'white',
+                                  borderRadius: 10,
+                                  fontSize: 14,
+                                  fontWeight: 600
+                                }}>
+                                  ✅ Successfully Hired
+                                </div>
+                              )}
+                              {/* Revert Stage Button - Only show if not in first stage and not hired */}
+                              {selectedCandidate.stage !== 'shortlisting' && selectedCandidate.stage !== 'hired' && (
+                                <button
+                                  onClick={() => {
+                                    setShowRevertStageModal(true);
+                                    setRevertReason('');
+                                    setRevertTargetStage('');
+                                  }}
+                                  style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#f0f9ff', color: '#0369a1', border: '1px solid #bae6fd' }}
+                                >
+                                  ⏪ Revert to Previous Stage
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -19087,6 +19125,411 @@ export default function App() {
                   <span>🎁</span> Send Offer Now
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hire Confirmation Modal */}
+      {showHireConfirmModal && selectedCandidate && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          animation: 'fadeIn 0.3s ease-out'
+        }}
+        onClick={() => !isProcessingHire && setShowHireConfirmModal(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: 24,
+              width: '90%',
+              maxWidth: 520,
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+              overflow: 'hidden',
+              animation: 'slideUp 0.4s ease-out'
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              padding: '32px 32px 28px',
+              textAlign: 'center',
+              color: 'white'
+            }}>
+              <div style={{
+                width: 72,
+                height: 72,
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+                fontSize: 36
+              }}>
+                🎉
+              </div>
+              <h2 style={{
+                fontSize: 24,
+                fontWeight: 700,
+                margin: '0 0 8px'
+              }}>
+                Confirm Hire
+              </h2>
+              <p style={{
+                fontSize: 15,
+                margin: 0,
+                opacity: 0.9
+              }}>
+                Move {selectedCandidate.name} to Hired status
+              </p>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Candidate Summary */}
+              <div style={{
+                background: '#f0fdf4',
+                border: '2px solid #86efac',
+                borderRadius: 14,
+                padding: 18,
+                marginBottom: 20
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 14,
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                    fontSize: 22,
+                    fontWeight: 700
+                  }}>
+                    {selectedCandidate.name?.charAt(0)?.toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: '#166534' }}>
+                      {selectedCandidate.name}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#15803d' }}>
+                      {selectedCandidate.role || 'Position'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#22c55e', marginTop: 4 }}>
+                      ✅ Offer Accepted
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* What happens info */}
+              <div style={{
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: 12,
+                padding: 16,
+                marginBottom: 24
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>📋</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>What happens next:</div>
+                    <ul style={{ fontSize: 13, color: '#3b82f6', lineHeight: 1.6, margin: 0, paddingLeft: 16 }}>
+                      <li>Candidate will be moved to "Hired" stage</li>
+                      <li>Recruitment pipeline will be completed</li>
+                      <li>Onboarding process can begin</li>
+                      <li>Position will be marked as filled</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => setShowHireConfirmModal(false)}
+                  disabled={isProcessingHire}
+                  style={{
+                    flex: 1,
+                    padding: '14px 20px',
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    fontWeight: 600,
+                    cursor: isProcessingHire ? 'not-allowed' : 'pointer',
+                    opacity: isProcessingHire ? 0.6 : 1
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setIsProcessingHire(true);
+                    try {
+                      // Update candidate stage to hired
+                      const res = await fetch(`${API_BASE}/applications/${selectedCandidate.id}/stage`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage: 'hired', sendEmail: true })
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        // Update local state immediately
+                        setSelectedCandidate({ ...selectedCandidate, stage: 'hired' });
+
+                        // Store data for success modal (including email status)
+                        setHiredCandidateData({
+                          name: selectedCandidate.name,
+                          role: selectedCandidate.role,
+                          email: selectedCandidate.email,
+                          emailSent: data.emailSent
+                        });
+
+                        // Close confirm modal, show success
+                        setShowHireConfirmModal(false);
+                        setShowHireSuccessModal(true);
+
+                        // Refresh data in background
+                        refreshData(selectedCandidate.id);
+                      } else {
+                        pop('Failed to update candidate status');
+                      }
+                    } catch (error) {
+                      console.error('Error hiring candidate:', error);
+                      pop('Failed to hire candidate');
+                    }
+                    setIsProcessingHire(false);
+                  }}
+                  disabled={isProcessingHire}
+                  style={{
+                    flex: 1.5,
+                    padding: '14px 20px',
+                    background: 'linear-gradient(135deg, #10b981, #059669)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    fontWeight: 700,
+                    cursor: isProcessingHire ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 15px rgba(16, 185, 129, 0.4)',
+                    opacity: isProcessingHire ? 0.8 : 1
+                  }}
+                >
+                  {isProcessingHire ? (
+                    <>
+                      <span style={{
+                        display: 'inline-block',
+                        width: 16,
+                        height: 16,
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        borderTopColor: 'white',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite'
+                      }} />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <span>✅</span> Confirm Hire
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hire Success Modal */}
+      {showHireSuccessModal && hiredCandidateData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 24,
+            width: '90%',
+            maxWidth: 520,
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+            overflow: 'hidden',
+            animation: 'slideUp 0.4s ease-out'
+          }}>
+            {/* Success Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              padding: '40px 32px',
+              textAlign: 'center',
+              color: 'white'
+            }}>
+              <div style={{
+                width: 90,
+                height: 90,
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 20px',
+                fontSize: 48,
+                animation: 'pulse 2s infinite'
+              }}>
+                🎊
+              </div>
+              <h2 style={{
+                fontSize: 28,
+                fontWeight: 700,
+                margin: '0 0 8px'
+              }}>
+                Congratulations!
+              </h2>
+              <p style={{
+                fontSize: 17,
+                margin: 0,
+                opacity: 0.95
+              }}>
+                <strong>{hiredCandidateData.name}</strong> has been hired!
+              </p>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Email Status */}
+              <div style={{
+                padding: 16,
+                background: hiredCandidateData.emailSent ? '#f0fdf4' : '#fef3c7',
+                border: `2px solid ${hiredCandidateData.emailSent ? '#86efac' : '#fde68a'}`,
+                borderRadius: 12,
+                marginBottom: 20,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12
+              }}>
+                <div style={{
+                  width: 44,
+                  height: 44,
+                  background: hiredCandidateData.emailSent ? '#dcfce7' : '#fef9c3',
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22
+                }}>
+                  {hiredCandidateData.emailSent ? '📧' : '⚠️'}
+                </div>
+                <div>
+                  <div style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: hiredCandidateData.emailSent ? '#166534' : '#92400e'
+                  }}>
+                    {hiredCandidateData.emailSent ? 'Welcome Email Sent!' : 'Email Could Not Be Sent'}
+                  </div>
+                  <div style={{
+                    fontSize: 13,
+                    color: hiredCandidateData.emailSent ? '#15803d' : '#a16207',
+                    marginTop: 2
+                  }}>
+                    {hiredCandidateData.emailSent
+                      ? `Congratulatory email sent to ${hiredCandidateData.email}`
+                      : 'Please send a welcome email manually'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Success message */}
+              <div style={{
+                background: '#f0fdf4',
+                border: '2px solid #86efac',
+                borderRadius: 14,
+                padding: 20,
+                marginBottom: 20,
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 600, color: '#166534', marginBottom: 8 }}>
+                  ✅ Successfully Hired
+                </div>
+                <div style={{ fontSize: 14, color: '#15803d' }}>
+                  {hiredCandidateData.role || 'Position'}
+                </div>
+              </div>
+
+              {/* Next steps */}
+              <div style={{
+                background: '#fefce8',
+                border: '1px solid #fde68a',
+                borderRadius: 12,
+                padding: 16,
+                marginBottom: 24
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>📋</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>Onboarding Checklist:</div>
+                    <ul style={{ fontSize: 13, color: '#a16207', lineHeight: 1.6, margin: 0, paddingLeft: 16 }}>
+                      <li>Prepare necessary equipment and access</li>
+                      <li>Schedule orientation meetings</li>
+                      <li>Complete HR documentation</li>
+                      <li>Introduce to team members</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Done Button */}
+              <button
+                onClick={() => {
+                  setShowHireSuccessModal(false);
+                  setHiredCandidateData(null);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '16px 24px',
+                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 12,
+                  fontSize: 16,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  boxShadow: '0 4px 15px rgba(16, 185, 129, 0.4)'
+                }}
+              >
+                <span>🎉</span> Done - Start Onboarding
+              </button>
             </div>
           </div>
         </div>

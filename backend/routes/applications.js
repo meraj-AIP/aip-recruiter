@@ -259,6 +259,75 @@ router.post('/:id/move-stage', async (req, res) => {
   }
 });
 
+// PATCH /api/applications/:id/stage - Update application stage (with hire email support)
+router.patch('/:id/stage', async (req, res) => {
+  try {
+    const { stage, sendEmail = true } = req.body;
+
+    if (!stage) {
+      return res.status(400).json({ error: 'Stage is required' });
+    }
+
+    // Get application with candidate and job details
+    const application = await Application.findById(req.params.id)
+      .populate('candidate_id')
+      .populate('job_id');
+
+    if (!application) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    const previousStage = application.stage;
+
+    // Update the stage
+    application.stage = stage;
+    application.last_activity_at = new Date();
+    application.updatedAt = new Date();
+    await application.save();
+
+    // Log activity
+    await new ActivityLog({
+      application_id: application._id,
+      company_id: application.company_id,
+      action: 'stage_changed',
+      description: `Stage changed from ${previousStage} to ${stage}`,
+      metadata: { previous_stage: previousStage, new_stage: stage },
+    }).save();
+
+    // If hired, send congratulatory email
+    let emailSent = false;
+    if (stage === 'hired' && sendEmail && application.candidate_id?.email) {
+      try {
+        const result = await emailService.sendHireConfirmationEmail({
+          candidateName: application.candidate_id.name,
+          candidateEmail: application.candidate_id.email,
+          jobTitle: application.job_id?.title || 'the position',
+          startDate: null, // Can be added later
+          managerName: null
+        });
+        emailSent = result.success;
+        console.log('🎉 Hire confirmation email sent to:', application.candidate_id.email);
+      } catch (emailError) {
+        console.error('Failed to send hire confirmation email:', emailError);
+      }
+    }
+
+    console.log(`✅ Application ${application._id} stage updated to ${stage}`);
+
+    res.json({
+      success: true,
+      data: { ...application.toObject(), id: application._id },
+      emailSent,
+      message: stage === 'hired'
+        ? (emailSent ? 'Candidate hired and congratulatory email sent!' : 'Candidate hired successfully')
+        : `Stage updated to ${stage}`
+    });
+  } catch (error) {
+    console.error('Error updating application stage:', error);
+    res.status(500).json({ error: 'Failed to update stage' });
+  }
+});
+
 // GET /api/applications/:id/activity - Get activity log
 router.get('/:id/activity', async (req, res) => {
   try {

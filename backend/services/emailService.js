@@ -1657,6 +1657,231 @@ async function sendOfferAcceptanceConfirmation(params) {
   return sendEmail(candidateEmail, subject, html);
 }
 
+/**
+ * Test email configuration - sends a test email to verify SMTP settings
+ * @param {string} recipientEmail - Email address to send test to
+ * @returns {Promise<Object>} Test result with status and details
+ */
+async function testEmailConfiguration(recipientEmail) {
+  try {
+    const transport = await initTransporter();
+
+    // Check configuration
+    const config = {
+      host: process.env.EMAIL_HOST || 'not set',
+      port: process.env.EMAIL_PORT || 'not set',
+      user: process.env.EMAIL_USER ? `${process.env.EMAIL_USER.substring(0, 5)}...` : 'not set',
+      password: process.env.EMAIL_PASSWORD ? '***set***' : 'not set',
+      from: process.env.EMAIL_FROM || 'not set'
+    };
+
+    console.log('📧 Email configuration check:', config);
+
+    // Try to verify transport
+    try {
+      await transport.verify();
+      console.log('✅ SMTP connection verified successfully');
+    } catch (verifyError) {
+      console.error('❌ SMTP verification failed:', verifyError.message);
+      return {
+        success: false,
+        error: 'SMTP verification failed',
+        details: verifyError.message,
+        config
+      };
+    }
+
+    // Send test email
+    const testHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #10b981;">✅ Email Configuration Test</h2>
+        <p>This is a test email from your AI Recruitment Platform.</p>
+        <p>If you're receiving this, your email configuration is working correctly!</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+        <p style="font-size: 12px; color: #64748b;">
+          Sent at: ${new Date().toISOString()}<br>
+          Environment: ${process.env.NODE_ENV || 'development'}<br>
+          SMTP Host: ${process.env.EMAIL_HOST}
+        </p>
+      </div>
+    `;
+
+    const result = await transport.sendMail({
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      to: recipientEmail,
+      subject: '✅ Email Configuration Test - AI Recruitment Platform',
+      html: testHtml
+    });
+
+    console.log('✅ Test email sent successfully:', result.messageId);
+
+    return {
+      success: true,
+      messageId: result.messageId,
+      config
+    };
+  } catch (error) {
+    console.error('❌ Test email failed:', error);
+    return {
+      success: false,
+      error: error.message,
+      code: error.code,
+      details: error.response || error.responseCode || 'No additional details'
+    };
+  }
+}
+
+/**
+ * Get email service status
+ * @returns {Object} Status information
+ */
+function getEmailStatus() {
+  return {
+    configured: !!(process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASSWORD),
+    host: process.env.EMAIL_HOST || 'not configured',
+    port: process.env.EMAIL_PORT || 587,
+    user: process.env.EMAIL_USER ? `${process.env.EMAIL_USER.substring(0, 10)}...` : 'not configured',
+    from: process.env.EMAIL_FROM || 'not configured',
+    transporterReady: !!transporter
+  };
+}
+
+/**
+ * Send congratulatory welcome email to newly hired candidate
+ * @param {Object} params - Email parameters
+ * @param {string} params.candidateName - Candidate's name
+ * @param {string} params.candidateEmail - Candidate's email
+ * @param {string} params.jobTitle - Job title
+ * @param {string} params.startDate - Start date (optional)
+ * @param {string} params.managerName - Hiring manager name (optional)
+ * @returns {Promise<Object>} Result with success status
+ */
+async function sendHireConfirmationEmail(params) {
+  const {
+    candidateName,
+    candidateEmail,
+    jobTitle,
+    startDate,
+    managerName
+  } = params;
+
+  const subject = `🎉 Welcome to the Team, ${candidateName}! - AI Planet`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc;">
+      <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 48px 32px; text-align: center;">
+          <div style="font-size: 64px; margin-bottom: 16px;">🎊</div>
+          <h1 style="color: white; font-size: 28px; margin: 0 0 8px; font-weight: 700;">
+            Congratulations!
+          </h1>
+          <p style="color: rgba(255, 255, 255, 0.9); font-size: 18px; margin: 0;">
+            Welcome to AI Planet
+          </p>
+        </div>
+
+        <!-- Content -->
+        <div style="padding: 40px 32px;">
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 0 0 24px;">
+            Dear <strong>${candidateName}</strong>,
+          </p>
+
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 0 0 24px;">
+            We are thrilled to officially welcome you to the <strong>AI Planet</strong> team! 🎉
+          </p>
+
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 0 0 24px;">
+            Your journey with us as <strong style="color: #059669;">${jobTitle}</strong> is about to begin, and we couldn't be more excited to have you on board.
+          </p>
+
+          <!-- Success Box -->
+          <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #86efac; border-radius: 16px; padding: 24px; margin: 24px 0; text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 12px;">✅</div>
+            <div style="font-size: 18px; font-weight: 700; color: #166534; margin-bottom: 4px;">
+              You're Officially Hired!
+            </div>
+            <div style="font-size: 14px; color: #15803d;">
+              ${jobTitle} at AI Planet
+            </div>
+          </div>
+
+          ${startDate ? `
+          <div style="background: #fefce8; border: 1px solid #fde68a; border-radius: 12px; padding: 16px; margin: 24px 0;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 24px;">📅</span>
+              <div>
+                <div style="font-size: 12px; color: #92400e; font-weight: 600; text-transform: uppercase;">Start Date</div>
+                <div style="font-size: 16px; color: #78350f; font-weight: 600;">${startDate}</div>
+              </div>
+            </div>
+          </div>
+          ` : ''}
+
+          <!-- What's Next Section -->
+          <div style="background: #f8fafc; border-radius: 12px; padding: 24px; margin: 24px 0;">
+            <h3 style="color: #1e293b; font-size: 16px; margin: 0 0 16px; font-weight: 600;">
+              📋 What Happens Next:
+            </h3>
+            <ul style="margin: 0; padding-left: 20px; color: #475569; line-height: 1.8;">
+              <li>Our HR team will reach out with onboarding details</li>
+              <li>You'll receive information about your first day</li>
+              <li>Email, Async communication channels setup will be done</li>
+              <li>Your team will be notified to welcome you</li>
+            </ul>
+          </div>
+
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 24px 0;">
+            We believe your skills and experience will be a great addition to our team. Get ready for an exciting journey of innovation and growth!
+          </p>
+
+          ${managerName ? `
+          <p style="font-size: 14px; color: #64748b; margin: 24px 0 0;">
+            <strong>Your Hiring Manager:</strong> ${managerName}
+          </p>
+          ` : ''}
+
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 24px 0 0;">
+            Once again, congratulations and welcome aboard! 🚀
+          </p>
+
+          <p style="font-size: 16px; color: #334155; line-height: 1.6; margin: 24px 0 0;">
+            Best regards,<br>
+            <strong>The AI Planet Team</strong>
+          </p>
+        </div>
+
+        <!-- Footer -->
+        <div style="background: #f8fafc; padding: 24px 32px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="color: #64748b; font-size: 13px; margin: 0 0 8px;">
+            AI Planet | Building the Future with AI
+          </p>
+          <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+            © ${new Date().getFullYear()} AI Planet. All rights reserved.
+          </p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  try {
+    await sendEmail(candidateEmail, subject, html);
+    console.log('🎉 Hire confirmation email sent to:', candidateEmail);
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending hire confirmation email:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   sendApplicationReceived,
   sendInterviewInvitation,
@@ -1670,5 +1895,8 @@ module.exports = {
   sendAssignmentEmail,
   sendOfferEmail,
   sendOfferAcceptanceConfirmation,
-  sendEmail
+  sendEmail,
+  testEmailConfiguration,
+  getEmailStatus,
+  sendHireConfirmationEmail
 };

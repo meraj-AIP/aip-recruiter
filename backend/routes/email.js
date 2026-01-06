@@ -204,4 +204,57 @@ router.post('/offer', async (req, res) => {
   }
 });
 
+// GET /api/email/status - Check email configuration status
+router.get('/status', (req, res) => {
+  try {
+    const status = emailService.getEmailStatus();
+    res.json({
+      success: true,
+      data: status
+    });
+  } catch (error) {
+    console.error('Error checking email status:', error);
+    res.status(500).json({ error: 'Failed to check email status' });
+  }
+});
+
+// POST /api/email/test - Send a test email to verify configuration
+router.post('/test', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required' });
+    }
+
+    console.log('📧 Testing email configuration, sending to:', email);
+
+    const result = await emailService.testEmailConfiguration(email);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Test email sent successfully',
+        messageId: result.messageId,
+        config: result.config
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        details: result.details,
+        code: result.code,
+        config: result.config
+      });
+    }
+  } catch (error) {
+    console.error('Email test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 module.exports = router;
