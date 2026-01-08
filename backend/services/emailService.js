@@ -71,10 +71,30 @@ initTransporter();
 
 /**
  * Generate simple email footer
+ * @param {Object} options - Optional parameters
+ * @param {string} options.candidateEmail - Candidate email for tracking link
+ * @param {boolean} options.showTrackingLink - Whether to show application tracking link (default: true for candidates)
  */
-function generateEmailFooter() {
+function generateEmailFooter(options = {}) {
+  const { candidateEmail, showTrackingLink = true } = options;
+  const portalUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  const trackingLinkHtml = showTrackingLink && candidateEmail ? `
+    <div style="margin-bottom: 20px; padding: 16px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 8px; border: 1px solid #bbf7d0;">
+      <a href="${portalUrl}/portal" style="text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px;">
+        <span style="font-size: 16px;">&#128269;</span>
+        <span style="font-size: 14px; font-weight: 600; color: #166534;">Track Your Application Status</span>
+        <span style="font-size: 14px; color: #10b981;">&#8594;</span>
+      </a>
+      <p style="margin: 8px 0 0; font-size: 12px; color: #15803d; text-align: center;">
+        Use your email and last 5 digits of your registered phone number to check status
+      </p>
+    </div>
+  ` : '';
+
   return `
     <div style="padding: 24px 32px; text-align: center; border-top: 1px solid #e2e8f0; background: #f8fafc;">
+      ${trackingLinkHtml}
       <p style="margin: 0 0 8px; font-size: 13px; color: #64748b;">AI Planet | Building the Future with AI</p>
       <p style="margin: 0; font-size: 12px; color: #94a3b8;">&copy; ${new Date().getFullYear()} AI Planet. All rights reserved.</p>
     </div>`;
@@ -158,7 +178,7 @@ async function sendApplicationReceived(candidate, job) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail: candidate.email })}
     </div>
   `;
 
@@ -223,7 +243,7 @@ async function sendInterviewInvitation(candidate, interview) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail: candidate.email })}
     </div>
   `;
 
@@ -440,7 +460,7 @@ async function sendInterviewInvitationWithCalendar(params) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail })}
     </div>
   `;
 
@@ -739,7 +759,7 @@ async function sendStatusUpdate(candidate, newStatus, job) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail: candidate.email })}
     </div>
   `;
 
@@ -916,7 +936,7 @@ async function sendOfferLetter(candidate, offer) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail: candidate.email })}
     </div>
   `;
 
@@ -1101,7 +1121,7 @@ async function sendScreeningInvitation(params) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail })}
     </div>
   `;
 
@@ -1330,7 +1350,7 @@ async function sendAssignmentEmail(params) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail })}
     </div>
   `;
 
@@ -1543,7 +1563,7 @@ async function sendOfferEmail(params) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Recruitment Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail })}
     </div>
   `;
 
@@ -1650,7 +1670,7 @@ async function sendOfferAcceptanceConfirmation(params) {
         <p style="font-size: 14px; color: #1e293b; font-weight: 600; margin: 0;">The AI Planet Team</p>
       </div>
 
-      ${generateEmailFooter()}
+      ${generateEmailFooter({ candidateEmail })}
     </div>
   `;
 
@@ -1859,14 +1879,7 @@ async function sendHireConfirmationEmail(params) {
         </div>
 
         <!-- Footer -->
-        <div style="background: #f8fafc; padding: 24px 32px; text-align: center; border-top: 1px solid #e2e8f0;">
-          <p style="color: #64748b; font-size: 13px; margin: 0 0 8px;">
-            AI Planet | Building the Future with AI
-          </p>
-          <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-            © ${new Date().getFullYear()} AI Planet. All rights reserved.
-          </p>
-        </div>
+        ${generateEmailFooter({ candidateEmail, showTrackingLink: false })}
       </div>
     </body>
     </html>

@@ -6719,6 +6719,51 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Candidate Portal Link */}
+            <div style={{
+              marginTop: 16,
+              padding: 16,
+              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+              borderRadius: 12,
+              border: '1px solid #bbf7d0',
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
+            onClick={() => navigate('/portal')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.15)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 36,
+                  height: 36,
+                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <span style={{ fontSize: 16, color: 'white' }}>&#128269;</span>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#166534', marginBottom: 2 }}>
+                    Track Your Application
+                  </div>
+                  <div style={{ fontSize: 12, color: '#15803d' }}>
+                    Already applied? Check your application status here
+                  </div>
+                </div>
+                <span style={{ fontSize: 18, color: '#10b981' }}>&#8594;</span>
+              </div>
+            </div>
           </div>
 
           {/* Footer */}
