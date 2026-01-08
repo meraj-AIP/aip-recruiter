@@ -29,6 +29,10 @@ const assignmentRoutes = require('./routes/assignments');
 const interviewRoutes = require('./routes/interviews');
 const roleRoutes = require('./routes/roles');
 const offerRoutes = require('./routes/offers');
+const importRoutes = require('./routes/import');
+const analyticsRoutes = require('./routes/analytics');
+const portalRoutes = require('./routes/portal');
+const talentPoolRoutes = require('./routes/talentPool');
 
 // Initialize Express app
 const app = express();
@@ -83,6 +87,10 @@ app.use('/api/assignments', assignmentRoutes);
 app.use('/api/interviews', interviewRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/offers', offerRoutes);
+app.use('/api/import', importRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/portal', portalRoutes);
+app.use('/api/talent-pool', talentPoolRoutes);
 
 // =====================================================
 // LOOKUPS API (Departments, Role Types, Work Setups)

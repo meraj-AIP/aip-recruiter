@@ -364,4 +364,196 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// =====================================================
+// REMINDER ENDPOINTS
+// =====================================================
+
+const reminderService = require('../services/reminderService');
+
+// GET /api/interviews/reminders/upcoming - Get upcoming interviews needing reminders
+router.get('/reminders/upcoming', async (req, res) => {
+  try {
+    const { hours = 24 } = req.query;
+
+    const interviews = await reminderService.getUpcomingInterviews(parseInt(hours));
+
+    res.json({
+      success: true,
+      data: interviews,
+      count: interviews.length
+    });
+  } catch (error) {
+    console.error('Error getting upcoming interviews:', error);
+    res.status(500).json({ error: 'Failed to get upcoming interviews' });
+  }
+});
+
+// POST /api/interviews/reminders/process - Process all pending reminders
+router.post('/reminders/process', async (req, res) => {
+  try {
+    const { hours = 24 } = req.body;
+
+    const result = await reminderService.processInterviewReminders(parseInt(hours));
+
+    res.json({
+      success: true,
+      message: `Processed ${result.total} reminders: ${result.sent} sent, ${result.failed} failed`,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error processing reminders:', error);
+    res.status(500).json({ error: 'Failed to process reminders' });
+  }
+});
+
+// POST /api/interviews/:id/reminder - Send reminder for specific interview
+router.post('/:id/reminder', async (req, res) => {
+  try {
+    const result = await reminderService.sendManualReminder(req.params.id);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Reminder sent to ${result.email}`
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('Error sending reminder:', error);
+    res.status(500).json({ error: 'Failed to send reminder' });
+  }
+});
+
+// =====================================================
+// SCORECARD ENDPOINTS
+// =====================================================
+
+// GET /api/interviews/:id/scorecard - Get interview scorecard
+router.get('/:id/scorecard', async (req, res) => {
+  try {
+    const interview = await Interview.findById(req.params.id).lean();
+
+    if (!interview) {
+      return res.status(404).json({ error: 'Interview not found' });
+    }
+
+    res.json({
+      success: true,
+      data: interview.scorecard || null
+    });
+  } catch (error) {
+    console.error('Error getting scorecard:', error);
+    res.status(500).json({ error: 'Failed to get scorecard' });
+  }
+});
+
+// POST /api/interviews/:id/scorecard - Submit interview scorecard
+router.post('/:id/scorecard', async (req, res) => {
+  try {
+    const {
+      technicalSkills,
+      communication,
+      problemSolving,
+      cultureFit,
+      leadership,
+      recommendation,
+      strengths,
+      weaknesses,
+      additionalNotes,
+      submittedBy
+    } = req.body;
+
+    // Calculate overall score
+    const scores = [
+      technicalSkills?.score,
+      communication?.score,
+      problemSolving?.score,
+      cultureFit?.score,
+      leadership?.score
+    ].filter(s => s !== undefined && s !== null);
+
+    const overallScore = scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10
+      : null;
+
+    const scorecard = {
+      technicalSkills,
+      communication,
+      problemSolving,
+      cultureFit,
+      leadership,
+      overallScore,
+      recommendation,
+      strengths: strengths || [],
+      weaknesses: weaknesses || [],
+      additionalNotes,
+      submittedBy,
+      submittedAt: new Date()
+    };
+
+    const interview = await Interview.findByIdAndUpdate(
+      req.params.id,
+      {
+        scorecard,
+        feedback_submitted: true,
+        rating: overallScore
+      },
+      { new: true }
+    ).lean();
+
+    if (!interview) {
+      return res.status(404).json({ error: 'Interview not found' });
+    }
+
+    // Log activity
+    await new ActivityLog({
+      application_id: interview.application_id,
+      action: 'scorecard_submitted',
+      description: `Interview scorecard submitted by ${submittedBy}`,
+      metadata: { interviewId: interview._id, overallScore, recommendation }
+    }).save();
+
+    res.json({
+      success: true,
+      message: 'Scorecard submitted successfully',
+      data: interview.scorecard
+    });
+  } catch (error) {
+    console.error('Error submitting scorecard:', error);
+    res.status(500).json({ error: 'Failed to submit scorecard' });
+  }
+});
+
+// GET /api/interviews/scorecards/pending - Get interviews pending scorecard
+router.get('/scorecards/pending', async (req, res) => {
+  try {
+    const interviews = await Interview.find({
+      status: { $in: ['completed', 'Completed'] },
+      feedback_submitted: { $ne: true }
+    })
+    .populate({
+      path: 'application_id',
+      populate: [
+        { path: 'candidate_id', select: 'name email' },
+        { path: 'job_id', select: 'title' }
+      ]
+    })
+    .sort({ scheduled_date: -1 })
+    .lean();
+
+    res.json({
+      success: true,
+      data: interviews,
+      count: interviews.length
+    });
+  } catch (error) {
+    console.error('Error getting pending scorecards:', error);
+    res.status(500).json({ error: 'Failed to get pending scorecards' });
+  }
+});
+
 module.exports = router;

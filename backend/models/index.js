@@ -121,9 +121,36 @@ const candidateSchema = new Schema({
   portfolio_url: String,
   resume_url: String,
   resume_text: String,
+  // Additional profile fields (for imports)
+  skills: [String],
+  experience: String,
+  current_company: String,
+  current_title: String,
+  education: String,
+  source: String,
+  notes: String,
+  // Import tracking
+  importedAt: Date,
+  importedBy: String,
+  importPlatform: String,
+  // Talent Pool fields
+  inTalentPool: { type: Boolean, default: false },
+  talentPoolReason: String,
+  talentPoolTags: [String],
+  talentPoolNotes: String,
+  talentPoolAddedBy: String,
+  talentPoolAddedAt: Date,
+  previousApplications: [{
+    jobId: { type: Schema.Types.ObjectId, ref: 'JobOpening' },
+    stage: String,
+    appliedAt: Date
+  }]
 }, { timestamps: true });
 
 candidateSchema.index({ email: 1 }, { unique: true });
+candidateSchema.index({ inTalentPool: 1 });
+candidateSchema.index({ skills: 1 });
+candidateSchema.index({ '$**': 'text' }); // Text search index
 
 // =====================================================
 // APPLICATION SCHEMA
@@ -230,6 +257,24 @@ const interviewSchema = new Schema({
   // Who scheduled it
   scheduled_by: String,
   scheduled_by_id: { type: Schema.Types.ObjectId, ref: 'User' },
+  // Reminders
+  reminderSent: { type: Boolean, default: false },
+  reminderSentAt: Date,
+  // Scorecard
+  scorecard: {
+    technicalSkills: { score: Number, notes: String },
+    communication: { score: Number, notes: String },
+    problemSolving: { score: Number, notes: String },
+    cultureFit: { score: Number, notes: String },
+    leadership: { score: Number, notes: String },
+    overallScore: Number,
+    recommendation: { type: String, enum: ['strong_hire', 'hire', 'maybe', 'no_hire', 'strong_no_hire'] },
+    strengths: [String],
+    weaknesses: [String],
+    additionalNotes: String,
+    submittedBy: String,
+    submittedAt: Date
+  }
 }, { timestamps: true });
 
 // =====================================================
