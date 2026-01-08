@@ -492,6 +492,1105 @@ const JourneyTab = ({ applicationId, candidateName }) => {
   );
 };
 
+// ============================================
+// TALENT POOL VIEW COMPONENT
+// ============================================
+const TalentPoolView = ({ API_BASE, pop, openings }) => {
+  const [candidates, setCandidates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ totalCount: 0, recentlyAdded: 0, topTags: [] });
+  const [search, setSearch] = useState('');
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [showApplyModal, setShowApplyModal] = useState(null);
+  const [selectedJob, setSelectedJob] = useState('');
+
+  const fetchTalentPool = useCallback(async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (search) params.append('search', search);
+      if (selectedTags.length > 0) params.append('tags', selectedTags.join(','));
+
+      const res = await fetch(`${API_BASE}/talent-pool?${params}`);
+      const data = await res.json();
+      if (data.success) {
+        setCandidates(data.data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching talent pool:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [API_BASE, search, selectedTags]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/talent-pool/stats`);
+      const data = await res.json();
+      if (data.success) {
+        setStats(data.data || { totalCount: 0, recentlyAdded: 0, topTags: [] });
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => fetchTalentPool(), 300);
+    return () => clearTimeout(timer);
+  }, [fetchTalentPool]);
+
+  const handleRemoveFromPool = async (candidateId) => {
+    if (!window.confirm('Remove this candidate from the talent pool?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/talent-pool/${candidateId}`, { method: 'DELETE' });
+      if (res.ok) {
+        pop('Candidate removed from talent pool');
+        fetchTalentPool();
+        fetchStats();
+      }
+    } catch (error) {
+      console.error('Error removing from pool:', error);
+    }
+  };
+
+  const handleApplyToJob = async () => {
+    if (!selectedJob || !showApplyModal) return;
+    try {
+      const res = await fetch(`${API_BASE}/talent-pool/${showApplyModal.id}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: selectedJob, appliedBy: 'Admin' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        pop('Application created successfully!');
+        setShowApplyModal(null);
+        setSelectedJob('');
+      } else {
+        pop(data.error || 'Failed to create application');
+      }
+    } catch (error) {
+      console.error('Error applying:', error);
+      pop('Failed to create application');
+    }
+  };
+
+  return (
+    <>
+      {/* Hero Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
+        borderRadius: 20,
+        padding: 32,
+        marginBottom: 28,
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, background: 'radial-gradient(circle, rgba(139, 92, 246, 0.3) 0%, transparent 70%)', borderRadius: '50%' }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ color: 'white', fontSize: 28, fontWeight: 700, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ width: 48, height: 48, background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>🎯</span>
+                Talent Pool
+              </h2>
+              <p style={{ color: '#94a3b8', margin: 0, fontSize: 15 }}>
+                Candidates saved for future opportunities
+              </p>
+            </div>
+            {stats && (
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={{ textAlign: 'center', padding: '12px 24px', background: 'rgba(255,255,255,0.1)', borderRadius: 12, backdropFilter: 'blur(10px)' }}>
+                  <div style={{ color: 'white', fontSize: 28, fontWeight: 700 }}>{stats.totalCount}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>Total</div>
+                </div>
+                <div style={{ textAlign: 'center', padding: '12px 24px', background: 'rgba(255,255,255,0.1)', borderRadius: 12, backdropFilter: 'blur(10px)' }}>
+                  <div style={{ color: '#10b981', fontSize: 28, fontWeight: 700 }}>{stats.recentlyAdded}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>This Month</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Search and Filters */}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search candidates by name, email, title..."
+          style={{
+            flex: 1,
+            padding: '14px 20px',
+            border: '2px solid #e2e8f0',
+            borderRadius: 12,
+            fontSize: 15,
+            outline: 'none',
+            transition: 'border-color 0.2s'
+          }}
+        />
+      </div>
+
+      {/* Tags Filter */}
+      {stats?.topTags?.length > 0 && (
+        <div style={{ marginBottom: 24, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {stats.topTags.map(tag => (
+            <button
+              key={tag.tag}
+              onClick={() => setSelectedTags(prev => prev.includes(tag.tag) ? prev.filter(t => t !== tag.tag) : [...prev, tag.tag])}
+              style={{
+                padding: '8px 16px',
+                background: selectedTags.includes(tag.tag) ? '#8b5cf6' : 'white',
+                color: selectedTags.includes(tag.tag) ? 'white' : '#64748b',
+                border: '1px solid #e2e8f0',
+                borderRadius: 20,
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 500,
+                transition: 'all 0.2s'
+              }}
+            >
+              {tag.tag} ({tag.count})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Candidates Grid */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 60 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⏳</div>
+          <div style={{ color: '#64748b' }}>Loading talent pool...</div>
+        </div>
+      ) : candidates.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 60, background: 'white', borderRadius: 16, border: '1px solid #e2e8f0' }}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>🎯</div>
+          <h3 style={{ color: '#1e293b', marginBottom: 8 }}>No candidates in talent pool</h3>
+          <p style={{ color: '#64748b', margin: 0 }}>Add candidates from rejected applications or directly from the pipeline</p>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 20 }}>
+          {candidates.map(candidate => (
+            <div key={candidate.id} style={{
+              background: 'white',
+              borderRadius: 16,
+              border: '1px solid #e2e8f0',
+              overflow: 'hidden',
+              transition: 'all 0.2s',
+              cursor: 'pointer'
+            }}>
+              <div style={{ padding: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+                  <div style={{
+                    width: 52,
+                    height: 52,
+                    background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                    borderRadius: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                    fontSize: 20,
+                    fontWeight: 700
+                  }}>
+                    {candidate.name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 16 }}>{candidate.name}</div>
+                    <div style={{ color: '#64748b', fontSize: 13 }}>{candidate.current_title || candidate.email}</div>
+                  </div>
+                </div>
+
+                {candidate.talentPoolReason && (
+                  <div style={{ padding: '10px 12px', background: '#f8fafc', borderRadius: 8, marginBottom: 12, fontSize: 13, color: '#475569' }}>
+                    💡 {candidate.talentPoolReason}
+                  </div>
+                )}
+
+                {candidate.talentPoolTags?.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {candidate.talentPoolTags.map(tag => (
+                      <span key={tag} style={{
+                        padding: '4px 10px',
+                        background: '#ede9fe',
+                        color: '#7c3aed',
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 500
+                      }}>{tag}</span>
+                    ))}
+                  </div>
+                )}
+
+                {candidate.skills?.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {candidate.skills.slice(0, 4).map(skill => (
+                      <span key={skill} style={{
+                        padding: '3px 8px',
+                        background: '#f1f5f9',
+                        color: '#475569',
+                        borderRadius: 6,
+                        fontSize: 11
+                      }}>{skill}</span>
+                    ))}
+                    {candidate.skills.length > 4 && (
+                      <span style={{ padding: '3px 8px', color: '#94a3b8', fontSize: 11 }}>+{candidate.skills.length - 4}</span>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => setShowApplyModal(candidate)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: 13
+                    }}
+                  >
+                    Apply to Job
+                  </button>
+                  <button
+                    onClick={() => handleRemoveFromPool(candidate.id)}
+                    style={{
+                      padding: '10px 16px',
+                      background: '#fef2f2',
+                      color: '#dc2626',
+                      border: 'none',
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: 13
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Apply to Job Modal */}
+      {showApplyModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowApplyModal(null)}>
+          <div style={{
+            background: 'white',
+            borderRadius: 20,
+            padding: 32,
+            maxWidth: 500,
+            width: '90%'
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 24px', fontSize: 20, fontWeight: 700, color: '#1e293b' }}>
+              Apply {showApplyModal.name} to Job
+            </h3>
+            <select
+              value={selectedJob}
+              onChange={e => setSelectedJob(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                border: '2px solid #e2e8f0',
+                borderRadius: 12,
+                fontSize: 15,
+                marginBottom: 24
+              }}
+            >
+              <option value="">Select a job opening...</option>
+              {openings.filter(j => j.on).map(job => (
+                <option key={job.id} value={job.id}>{job.title}</option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => setShowApplyModal(null)}
+                style={{
+                  flex: 1,
+                  padding: '14px 24px',
+                  background: '#f1f5f9',
+                  color: '#475569',
+                  border: 'none',
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApplyToJob}
+                disabled={!selectedJob}
+                style={{
+                  flex: 1,
+                  padding: '14px 24px',
+                  background: selectedJob ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : '#e2e8f0',
+                  color: selectedJob ? 'white' : '#94a3b8',
+                  border: 'none',
+                  borderRadius: 12,
+                  cursor: selectedJob ? 'pointer' : 'not-allowed',
+                  fontWeight: 600
+                }}
+              >
+                Create Application
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+// ============================================
+// ANALYTICS VIEW COMPONENT
+// ============================================
+const AnalyticsView = ({ API_BASE, openings }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState('30');
+  const [selectedJob, setSelectedJob] = useState('');
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [dateRange, selectedJob]);
+
+  const fetchAnalytics = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (dateRange) {
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - parseInt(dateRange));
+        params.append('startDate', startDate.toISOString().split('T')[0]);
+      }
+      if (selectedJob) params.append('jobId', selectedJob);
+
+      const res = await fetch(`${API_BASE}/analytics/dashboard?${params}`);
+      const result = await res.json();
+      if (result.success) {
+        setData(result.data);
+      }
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const StatCard = ({ title, value, subtitle, icon, gradient, trend }) => (
+    <div style={{
+      background: 'white',
+      borderRadius: 16,
+      overflow: 'hidden',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.06)'
+    }}>
+      <div style={{
+        background: gradient,
+        padding: '16px 20px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <span style={{ fontSize: 28 }}>{icon}</span>
+        {trend && (
+          <span style={{
+            background: 'rgba(255,255,255,0.2)',
+            color: 'white',
+            padding: '4px 10px',
+            borderRadius: 20,
+            fontSize: 11,
+            fontWeight: 600
+          }}>{trend}</span>
+        )}
+      </div>
+      <div style={{ padding: 20 }}>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#1e293b', marginBottom: 4 }}>
+          {typeof value === 'number' ? value.toLocaleString() : value}
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 4 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 12, color: '#94a3b8' }}>{subtitle}</div>}
+      </div>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 100 }}>
+        <div style={{ fontSize: 64, marginBottom: 16 }}>📊</div>
+        <div style={{ color: '#64748b', fontSize: 16 }}>Loading analytics...</div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Hero Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
+        borderRadius: 20,
+        padding: 32,
+        marginBottom: 28,
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, background: 'radial-gradient(circle, rgba(14, 165, 233, 0.3) 0%, transparent 70%)', borderRadius: '50%' }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ color: 'white', fontSize: 28, fontWeight: 700, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ width: 48, height: 48, background: 'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📈</span>
+                Analytics & Insights
+              </h2>
+              <p style={{ color: '#94a3b8', margin: 0, fontSize: 15 }}>
+                Track your recruitment performance and metrics
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <select
+                value={dateRange}
+                onChange={e => setDateRange(e.target.value)}
+                style={{
+                  padding: '12px 20px',
+                  background: 'rgba(255,255,255,0.1)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: 12,
+                  color: 'white',
+                  fontSize: 14,
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="7" style={{ color: '#1e293b' }}>Last 7 days</option>
+                <option value="30" style={{ color: '#1e293b' }}>Last 30 days</option>
+                <option value="90" style={{ color: '#1e293b' }}>Last 90 days</option>
+                <option value="365" style={{ color: '#1e293b' }}>Last year</option>
+              </select>
+              <select
+                value={selectedJob}
+                onChange={e => setSelectedJob(e.target.value)}
+                style={{
+                  padding: '12px 20px',
+                  background: 'rgba(255,255,255,0.1)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  borderRadius: 12,
+                  color: 'white',
+                  fontSize: 14,
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="" style={{ color: '#1e293b' }}>All Jobs</option>
+                {openings.map(job => (
+                  <option key={job.id} value={job.id} style={{ color: '#1e293b' }}>{job.title}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 28 }}>
+        <StatCard
+          title="Total Applications"
+          value={data?.overview?.totalApplications || 0}
+          subtitle={`${data?.overview?.activeJobs || 0} active jobs`}
+          icon="📋"
+          gradient="linear-gradient(135deg, #0ea5e9, #0284c7)"
+        />
+        <StatCard
+          title="Conversion Rate"
+          value={`${data?.overview?.conversionRate || 0}%`}
+          subtitle="Application to hire"
+          icon="📈"
+          gradient="linear-gradient(135deg, #10b981, #059669)"
+          trend={data?.overview?.conversionRate > 10 ? 'Good' : 'Improve'}
+        />
+        <StatCard
+          title="Total Hired"
+          value={data?.overview?.hiredCount || 0}
+          subtitle={`${data?.overview?.rejectedCount || 0} rejected`}
+          icon="✅"
+          gradient="linear-gradient(135deg, #8b5cf6, #7c3aed)"
+        />
+        <StatCard
+          title="Offer Acceptance"
+          value={`${data?.overview?.offerAcceptanceRate || 0}%`}
+          subtitle={`${data?.overview?.acceptedOffers || 0} of ${data?.overview?.totalOffers || 0} offers`}
+          icon="🎯"
+          gradient="linear-gradient(135deg, #f59e0b, #d97706)"
+        />
+      </div>
+
+      {/* Pipeline Funnel */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 28 }}>
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 24,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)'
+        }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📊</span>
+            Pipeline Funnel
+          </h3>
+          {data?.funnel?.length > 0 ? (
+            <div>
+              {data.funnel.map((stage, i) => {
+                const maxCount = Math.max(...data.funnel.map(s => s.count));
+                const width = maxCount > 0 ? (stage.count / maxCount) * 100 : 0;
+                return (
+                  <div key={stage.stage} style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: '#475569' }}>{stage.name}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{stage.count}</span>
+                    </div>
+                    <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4 }}>
+                      <div style={{
+                        width: `${width}%`,
+                        height: '100%',
+                        background: `hsl(${250 - (i * 30)}, 70%, 60%)`,
+                        borderRadius: 4,
+                        transition: 'width 0.5s'
+                      }} />
+                    </div>
+                    {stage.dropOff !== undefined && i > 0 && (
+                      <div style={{ fontSize: 11, color: stage.dropOff > 50 ? '#ef4444' : '#10b981', marginTop: 4 }}>
+                        {stage.dropOff > 0 ? `${stage.dropOff}% drop-off` : 'No drop-off'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>📊</div>
+              No funnel data available
+            </div>
+          )}
+        </div>
+
+        {/* Source Analytics */}
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 24,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)'
+        }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #10b981, #059669)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🎯</span>
+            Top Sources
+          </h3>
+          {data?.sources?.length > 0 ? (
+            <div>
+              {data.sources.slice(0, 6).map((source, i) => (
+                <div key={source.source} style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 16px',
+                  background: '#f8fafc',
+                  borderRadius: 10,
+                  marginBottom: 8
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{
+                      width: 28,
+                      height: 28,
+                      background: `hsl(${150 + (i * 40)}, 60%, 50%)`,
+                      borderRadius: 8,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'white',
+                      fontSize: 12,
+                      fontWeight: 700
+                    }}>{i + 1}</span>
+                    <span style={{ fontWeight: 500, color: '#334155' }}>{source.source || 'Direct'}</span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: '#1e293b' }}>{source.count}</div>
+                    <div style={{ fontSize: 11, color: '#10b981' }}>{source.hiredCount || 0} hired</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🎯</div>
+              No source data available
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Time to Hire & Interview Analytics */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 24,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)'
+        }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #f59e0b, #d97706)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⏱️</span>
+            Time to Hire
+          </h3>
+          {data?.timeToHire ? (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div style={{ textAlign: 'center', padding: 20, background: '#f8fafc', borderRadius: 12 }}>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: '#f59e0b' }}>
+                    {Math.round(data.timeToHire.averageDays || 0)}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#64748b' }}>Avg Days</div>
+                </div>
+                <div style={{ textAlign: 'center', padding: 20, background: '#f8fafc', borderRadius: 12 }}>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: '#10b981' }}>
+                    {Math.round(data.timeToHire.minDays || 0)}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#64748b' }}>Fastest</div>
+                </div>
+              </div>
+              {data.timeToHire.byJob?.length > 0 && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#64748b', marginBottom: 10 }}>By Position</div>
+                  {data.timeToHire.byJob.slice(0, 3).map(job => (
+                    <div key={job.jobId} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <span style={{ color: '#475569', fontSize: 13 }}>{job.jobTitle}</span>
+                      <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 13 }}>{Math.round(job.avgDays)} days</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>⏱️</div>
+              No hiring data yet
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          padding: 24,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)'
+        }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #ec4899, #db2777)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🎤</span>
+            Interview Stats
+          </h3>
+          {data?.interviews ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+              <div style={{ textAlign: 'center', padding: 16, background: '#f8fafc', borderRadius: 12 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#1e293b' }}>{data.interviews.totalInterviews || 0}</div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>Total</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 16, background: '#f8fafc', borderRadius: 12 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#10b981' }}>{data.interviews.completedInterviews || 0}</div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>Completed</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 16, background: '#f8fafc', borderRadius: 12 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#0ea5e9' }}>{data.interviews.scheduledInterviews || 0}</div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>Scheduled</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 16, background: '#f8fafc', borderRadius: 12 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#f59e0b' }}>
+                  {data.interviews.averageRating ? data.interviews.averageRating.toFixed(1) : '-'}
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>Avg Rating</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🎤</div>
+              No interview data yet
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+};
+
+// ============================================
+// IMPORT CANDIDATES VIEW COMPONENT
+// ============================================
+const ImportCandidatesView = ({ API_BASE, pop, openings, refreshPeople }) => {
+  const [platform, setPlatform] = useState('');
+  const [csvContent, setCsvContent] = useState('');
+  const [selectedJob, setSelectedJob] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const platforms = [
+    { id: 'wellfound', name: 'Wellfound', icon: '🚀', color: '#ff6550' },
+    { id: 'linkedin', name: 'LinkedIn', icon: '💼', color: '#0077b5' },
+    { id: 'naukri', name: 'Naukri', icon: '📋', color: '#4285f4' },
+    { id: 'generic', name: 'Generic CSV', icon: '📄', color: '#6366f1' },
+  ];
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target.result;
+      setCsvContent(content);
+
+      // Preview the import
+      try {
+        const res = await fetch(`${API_BASE}/import/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvContent: content, platform: platform || undefined })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setPreview(data.data);
+          if (data.data.detectedPlatform && !platform) {
+            setPlatform(data.data.detectedPlatform);
+          }
+        } else {
+          pop(data.error || 'Failed to parse CSV');
+        }
+      } catch (error) {
+        console.error('Preview error:', error);
+        pop('Failed to preview CSV');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImport = async () => {
+    if (!csvContent || !selectedJob) {
+      pop('Please select a CSV file and job opening');
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/import/candidates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csvContent,
+          platform: platform || undefined,
+          jobId: selectedJob,
+          importedBy: 'Admin'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setImportResult(data.data);
+        pop(`Successfully imported ${data.data.successful} candidates!`);
+        if (refreshPeople) refreshPeople();
+      } else {
+        pop(data.error || 'Import failed');
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      pop('Failed to import candidates');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadTemplate = async (platformId) => {
+    try {
+      const res = await fetch(`${API_BASE}/import/template/${platformId}`);
+      const data = await res.json();
+      if (data.success) {
+        const blob = new Blob([data.template], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${platformId}_import_template.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      pop('Failed to download template');
+    }
+  };
+
+  return (
+    <>
+      {/* Hero Header */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
+        borderRadius: 20,
+        padding: 32,
+        marginBottom: 28,
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        <div style={{ position: 'absolute', top: -50, right: -50, width: 200, height: 200, background: 'radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, transparent 70%)', borderRadius: '50%' }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <h2 style={{ color: 'white', fontSize: 28, fontWeight: 700, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ width: 48, height: 48, background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📥</span>
+            Import Candidates
+          </h2>
+          <p style={{ color: '#94a3b8', margin: 0, fontSize: 15 }}>
+            Import candidates from Wellfound, LinkedIn, Naukri or any CSV file
+          </p>
+        </div>
+      </div>
+
+      {/* Platform Selection */}
+      <div style={{ marginBottom: 28 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: '#1e293b', marginBottom: 16 }}>Select Platform (or auto-detect)</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+          {platforms.map(p => (
+            <button
+              key={p.id}
+              onClick={() => setPlatform(p.id)}
+              style={{
+                padding: 20,
+                background: platform === p.id ? `${p.color}15` : 'white',
+                border: `2px solid ${platform === p.id ? p.color : '#e2e8f0'}`,
+                borderRadius: 16,
+                cursor: 'pointer',
+                textAlign: 'center',
+                transition: 'all 0.2s'
+              }}
+            >
+              <div style={{ fontSize: 32, marginBottom: 8 }}>{p.icon}</div>
+              <div style={{ fontWeight: 600, color: platform === p.id ? p.color : '#1e293b' }}>{p.name}</div>
+              <button
+                onClick={(e) => { e.stopPropagation(); downloadTemplate(p.id); }}
+                style={{
+                  marginTop: 8,
+                  padding: '4px 8px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#64748b',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
+              >
+                Download Template
+              </button>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        {/* Upload Section */}
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          border: '1px solid #e2e8f0',
+          overflow: 'hidden'
+        }}>
+          <div style={{ height: 4, background: 'linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%)' }} />
+          <div style={{ padding: 24 }}>
+            <h3 style={{ fontWeight: 700, color: '#1e293b', margin: '0 0 20px', fontSize: 18 }}>Upload CSV File</h3>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".csv"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: '2px dashed #6366f140',
+                borderRadius: 16,
+                padding: 40,
+                textAlign: 'center',
+                cursor: 'pointer',
+                marginBottom: 20,
+                background: csvContent ? '#f0fdf4' : '#f8fafc'
+              }}
+            >
+              {csvContent ? (
+                <>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+                  <div style={{ color: '#10b981', fontWeight: 600 }}>CSV file loaded</div>
+                  <div style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>Click to change file</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>📄</div>
+                  <div style={{ color: '#1e293b', fontWeight: 600 }}>Drop CSV file or click to browse</div>
+                  <div style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>Supports .csv files</div>
+                </>
+              )}
+            </div>
+
+            <select
+              value={selectedJob}
+              onChange={e => setSelectedJob(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                border: '2px solid #e2e8f0',
+                borderRadius: 12,
+                fontSize: 15,
+                marginBottom: 20
+              }}
+            >
+              <option value="">Select Job Opening *</option>
+              {openings.filter(j => j.on).map(job => (
+                <option key={job.id} value={job.id}>{job.title}</option>
+              ))}
+            </select>
+
+            <button
+              onClick={handleImport}
+              disabled={!csvContent || !selectedJob || importing}
+              style={{
+                width: '100%',
+                padding: '16px 24px',
+                background: csvContent && selectedJob ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : '#e2e8f0',
+                color: csvContent && selectedJob ? 'white' : '#94a3b8',
+                border: 'none',
+                borderRadius: 12,
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: csvContent && selectedJob ? 'pointer' : 'not-allowed'
+              }}
+            >
+              {importing ? 'Importing...' : 'Import Candidates'}
+            </button>
+          </div>
+        </div>
+
+        {/* Preview Section */}
+        <div style={{
+          background: 'white',
+          borderRadius: 16,
+          border: '1px solid #e2e8f0',
+          overflow: 'hidden'
+        }}>
+          <div style={{ height: 4, background: 'linear-gradient(90deg, #8b5cf6 0%, #ec4899 100%)' }} />
+          <div style={{ padding: 24 }}>
+            <h3 style={{ fontWeight: 700, color: '#1e293b', margin: '0 0 20px', fontSize: 18 }}>Preview</h3>
+
+            {!preview ? (
+              <div style={{ textAlign: 'center', padding: 60, color: '#94a3b8' }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>👀</div>
+                <div>Upload a CSV file to preview candidates</div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+                  <div style={{ textAlign: 'center', padding: 16, background: '#f0fdf4', borderRadius: 12 }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#10b981' }}>{preview.valid}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>Valid</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: 16, background: '#fef2f2', borderRadius: 12 }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#ef4444' }}>{preview.invalid}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>Invalid</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: 16, background: '#fef3c7', borderRadius: 12 }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#f59e0b' }}>{preview.duplicates}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>Duplicates</div>
+                  </div>
+                </div>
+
+                {preview.detectedPlatform && (
+                  <div style={{ padding: '10px 14px', background: '#ede9fe', borderRadius: 8, marginBottom: 16, fontSize: 13, color: '#7c3aed' }}>
+                    🎯 Detected platform: <strong>{preview.detectedPlatform}</strong>
+                  </div>
+                )}
+
+                <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                  {preview.candidates?.slice(0, 10).map((c, i) => (
+                    <div key={i} style={{
+                      padding: '12px 16px',
+                      background: c.isValid ? '#f8fafc' : '#fef2f2',
+                      borderRadius: 8,
+                      marginBottom: 8,
+                      border: `1px solid ${c.isValid ? '#e2e8f0' : '#fecaca'}`
+                    }}>
+                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{c.name || 'Unknown'}</div>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>{c.email || 'No email'}</div>
+                      {!c.isValid && c.errors && (
+                        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>
+                          {c.errors.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {preview.candidates?.length > 10 && (
+                    <div style={{ textAlign: 'center', padding: 12, color: '#64748b', fontSize: 13 }}>
+                      ... and {preview.candidates.length - 10} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Import Result */}
+      {importResult && (
+        <div style={{
+          marginTop: 28,
+          background: 'white',
+          borderRadius: 16,
+          border: '1px solid #e2e8f0',
+          padding: 24
+        }}>
+          <h3 style={{ fontWeight: 700, color: '#1e293b', margin: '0 0 20px', fontSize: 18 }}>Import Results</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+            <div style={{ textAlign: 'center', padding: 20, background: '#f8fafc', borderRadius: 12 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#1e293b' }}>{importResult.total}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>Total Processed</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 20, background: '#f0fdf4', borderRadius: 12 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#10b981' }}>{importResult.successful}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>Imported</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 20, background: '#fef2f2', borderRadius: 12 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#ef4444' }}>{importResult.failed}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>Failed</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 20, background: '#fef3c7', borderRadius: 12 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#f59e0b' }}>{importResult.skipped}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>Skipped</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 // Route to view mapping
 const routeToView = {
   '/': 'login',
@@ -502,6 +1601,8 @@ const routeToView = {
   '/tasks': 'tasks',
   '/assignments': 'assignments',
   '/import': 'import',
+  '/talent-pool': 'talentpool',
+  '/analytics': 'analytics',
   '/settings': 'settings',
   '/admin': 'admin',
 };
@@ -4664,7 +5765,7 @@ export default function App() {
   // ==================
   // FORCE LOGIN - Redirect to login if not authenticated and trying to access protected views
   // ==================
-  const protectedViews = ['dash', 'jobs', 'pipeline', 'tasks', 'import', 'settings', 'admin', 'profile'];
+  const protectedViews = ['dash', 'jobs', 'pipeline', 'tasks', 'import', 'talentpool', 'analytics', 'settings', 'admin', 'profile', 'assignments'];
   useEffect(() => {
     if (!currentUser && protectedViews.includes(view)) {
       navigate('/login');
@@ -5212,14 +6313,16 @@ export default function App() {
           SIDEBAR - Enterprise Design
           ================== */}
       <div style={{
-        width: 280,
+        width: 300,
+        minWidth: 300,
         background: 'linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
         position: 'fixed',
         height: '100vh',
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '4px 0 25px rgba(0,0,0,0.15)'
+        boxShadow: '4px 0 25px rgba(0,0,0,0.15)',
+        zIndex: 100
       }}>
         {/* Logo Section */}
         <div style={{
@@ -5250,7 +6353,7 @@ export default function App() {
           {/* Main Navigation */}
           <div style={{ marginBottom: 24 }}>
             <div style={{
-              color: '#64748b',
+              color: '#94a3b8',
               fontSize: 10,
               fontWeight: 700,
               letterSpacing: '1.5px',
@@ -5316,20 +6419,26 @@ export default function App() {
                   }}>
                     {item.i}
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      color: isActive ? 'white' : '#94a3b8',
+                      color: isActive ? '#ffffff' : '#e2e8f0',
                       fontSize: 14,
-                      fontWeight: isActive ? 600 : 500
+                      fontWeight: isActive ? 600 : 500,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
                     }}>{item.t}</div>
                     <div style={{
-                      color: '#64748b',
+                      color: isActive ? '#94a3b8' : '#94a3b8',
                       fontSize: 11,
-                      marginTop: 1
+                      marginTop: 1,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
                     }}>{item.desc}</div>
                   </div>
                   {isActive && (
-                    <div style={{ color: '#0ea5e9' }}>
+                    <div style={{ color: '#0ea5e9', flexShrink: 0 }}>
                       <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
@@ -5343,7 +6452,7 @@ export default function App() {
           {/* Recruitment Tools Section */}
           <div style={{ marginBottom: 24 }}>
             <div style={{
-              color: '#64748b',
+              color: '#94a3b8',
               fontSize: 10,
               fontWeight: 700,
               letterSpacing: '1.5px',
@@ -5353,8 +6462,10 @@ export default function App() {
               RECRUITMENT
             </div>
             {[
-              { k: 'import', t: 'Import Candidates', i: '📥', route: '/import', desc: 'Add New Talent', comingSoon: true },
+              { k: 'import', t: 'Import Candidates', i: '📥', route: '/import', desc: 'CSV Import' },
+              { k: 'talentpool', t: 'Talent Pool', i: '🎯', route: '/talent-pool', desc: 'Future Candidates' },
               { k: 'assignments', t: 'Assignments', i: '📝', route: '/assignments', desc: 'Manage Assignments' },
+              { k: 'analytics', t: 'Analytics', i: '📈', route: '/analytics', desc: 'Reports & Insights' },
             ].map(item => {
               const isActive = view === item.k;
               return (
@@ -5415,9 +6526,9 @@ export default function App() {
                   }}>
                     {item.i}
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      color: isActive ? 'white' : '#94a3b8',
+                      color: isActive ? '#ffffff' : '#e2e8f0',
                       fontSize: 14,
                       fontWeight: isActive ? 600 : 500,
                       display: 'flex',
@@ -5439,7 +6550,7 @@ export default function App() {
                       )}
                     </div>
                     <div style={{
-                      color: '#64748b',
+                      color: '#94a3b8',
                       fontSize: 11,
                       marginTop: 1
                     }}>{item.desc}</div>
@@ -5453,7 +6564,7 @@ export default function App() {
           {(currentUser?.role === 'Super Admin' || currentUser?.role === 'Admin') && (
             <div>
               <div style={{
-                color: '#64748b',
+                color: '#94a3b8',
                 fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '1.5px',
@@ -5517,14 +6628,14 @@ export default function App() {
                     }}>
                       {item.i}
                     </div>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
-                        color: isActive ? 'white' : '#94a3b8',
+                        color: isActive ? '#ffffff' : '#e2e8f0',
                         fontSize: 14,
                         fontWeight: isActive ? 600 : 500
                       }}>{item.t}</div>
                       <div style={{
-                        color: '#64748b',
+                        color: '#94a3b8',
                         fontSize: 11,
                         marginTop: 1
                       }}>{item.desc}</div>
@@ -5651,7 +6762,7 @@ export default function App() {
       {/* ==================
           MAIN CONTENT
           ================== */}
-      <div style={{ flex: 1, marginLeft: 280, padding: 32, overflow: 'hidden' }}>
+      <div style={{ flex: 1, marginLeft: 300, padding: 32, overflow: 'hidden' }}>
         
         {/* ==================
             DASHBOARD
@@ -9783,254 +10894,36 @@ export default function App() {
         )}
 
         {/* ==================
-            IMPORT SCREEN - Enterprise Redesign
+            IMPORT SCREEN - CSV Import
             ================== */}
         {view === 'import' && (
-          <>
-            {/* Hero Header - Enterprise Design */}
-            <div style={{
-              background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)',
-              borderRadius: 20,
-              padding: 32,
-              marginBottom: 28,
-              position: 'relative',
-              overflow: 'hidden'
-            }}>
-              {/* Background decorations */}
-              <div style={{
-                position: 'absolute',
-                top: -50,
-                right: -50,
-                width: 200,
-                height: 200,
-                background: 'radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, transparent 70%)',
-                borderRadius: '50%'
-              }} />
-              <div style={{
-                position: 'absolute',
-                bottom: -30,
-                left: '30%',
-                width: 150,
-                height: 150,
-                background: 'radial-gradient(circle, rgba(168, 85, 247, 0.2) 0%, transparent 70%)',
-                borderRadius: '50%'
-              }} />
+          <ImportCandidatesView
+            API_BASE={API_BASE}
+            pop={pop}
+            openings={openings}
+            refreshPeople={fetchCandidates}
+          />
+        )}
 
-              <div style={{ position: 'relative', zIndex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h2 style={{ color: 'white', fontSize: 28, fontWeight: 700, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span style={{
-                        width: 48,
-                        height: 48,
-                        background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
-                        borderRadius: 14,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 22
-                      }}>&#128229;</span>
-                      Import Candidates
-                    </h2>
-                    <p style={{ color: '#94a3b8', margin: 0, fontSize: 15 }}>
-                      Add candidates from LinkedIn profiles or upload resumes in bulk
-                    </p>
-                  </div>
-                  <div style={{
-                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                    color: 'white',
-                    padding: '10px 20px',
-                    borderRadius: 12,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    boxShadow: '0 4px 15px rgba(245, 158, 11, 0.3)'
-                  }}>
-                    &#128679; Coming Soon - Full Integration
-                  </div>
-                </div>
-              </div>
-            </div>
+        {/* ==================
+            TALENT POOL VIEW
+            ================== */}
+        {view === 'talentpool' && (
+          <TalentPoolView
+            API_BASE={API_BASE}
+            pop={pop}
+            openings={openings}
+          />
+        )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-              {/* LinkedIn Import */}
-              <div style={{
-                background: 'white',
-                borderRadius: 16,
-                border: '1px solid #e2e8f0',
-                overflow: 'hidden',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.04)',
-                position: 'relative'
-              }}>
-                <div style={{ height: 4, background: 'linear-gradient(90deg, #3b82f6 0%, #0ea5e9 100%)' }} />
-                <div style={{ padding: 24 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-                    <div style={{
-                      width: 52,
-                      height: 52,
-                      background: 'linear-gradient(135deg, #3b82f615 0%, #3b82f625 100%)',
-                      borderRadius: 14,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 26
-                    }}>&#128279;</div>
-                    <div>
-                      <h3 style={{ fontWeight: 700, color: '#1e293b', margin: 0, fontSize: 18 }}>LinkedIn Import</h3>
-                      <p style={{ color: '#64748b', margin: 0, fontSize: 14 }}>Paste a profile URL to import</p>
-                    </div>
-                  </div>
-                  <input
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    placeholder="https://linkedin.com/in/username"
-                    style={{
-                      ...styles.input,
-                      marginBottom: 12,
-                      padding: '14px 16px',
-                      borderRadius: 12,
-                      border: '2px solid #e2e8f0',
-                      fontSize: 14
-                    }}
-                  />
-                  <select
-                    style={{
-                      ...styles.input,
-                      marginBottom: 20,
-                      color: '#64748b',
-                      padding: '14px 16px',
-                      borderRadius: 12,
-                      border: '2px solid #e2e8f0',
-                      fontSize: 14
-                    }}
-                  >
-                    <option>Select Job Opening</option>
-                    {openings.map(j => <option key={j.id}>{j.name}</option>)}
-                  </select>
-                  <button
-                    onClick={bring}
-                    style={{
-                      width: '100%',
-                      padding: '14px 24px',
-                      background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: 12,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 15px rgba(59, 130, 246, 0.3)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8
-                    }}
-                  >
-                    &#128279; Import from LinkedIn
-                  </button>
-                </div>
-              </div>
-
-              {/* Bulk Upload */}
-              <div style={{
-                background: 'white',
-                borderRadius: 16,
-                border: '1px solid #e2e8f0',
-                overflow: 'hidden',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.04)'
-              }}>
-                <div style={{ height: 4, background: 'linear-gradient(90deg, #8b5cf6 0%, #a855f7 100%)' }} />
-                <div style={{ padding: 24 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-                    <div style={{
-                      width: 52,
-                      height: 52,
-                      background: 'linear-gradient(135deg, #8b5cf615 0%, #8b5cf625 100%)',
-                      borderRadius: 14,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 26
-                    }}>&#128196;</div>
-                    <div>
-                      <h3 style={{ fontWeight: 700, color: '#1e293b', margin: 0, fontSize: 18 }}>Bulk Upload</h3>
-                      <p style={{ color: '#64748b', margin: 0, fontSize: 14 }}>Upload multiple resumes at once</p>
-                    </div>
-                  </div>
-                  <div
-                    onClick={() => pop('File picker would open here')}
-                    style={{
-                      border: '2px dashed #8b5cf640',
-                      borderRadius: 16,
-                      padding: 40,
-                      textAlign: 'center',
-                      cursor: 'pointer',
-                      marginBottom: 20,
-                      transition: 'all 0.2s',
-                      background: 'linear-gradient(135deg, #8b5cf608 0%, #8b5cf612 100%)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = '#8b5cf6';
-                      e.currentTarget.style.background = 'linear-gradient(135deg, #8b5cf612 0%, #8b5cf620 100%)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = '#8b5cf640';
-                      e.currentTarget.style.background = 'linear-gradient(135deg, #8b5cf608 0%, #8b5cf612 100%)';
-                    }}
-                  >
-                    <div style={{
-                      width: 64,
-                      height: 64,
-                      background: 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)',
-                      borderRadius: 16,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 16px',
-                      boxShadow: '0 4px 15px rgba(139, 92, 246, 0.3)'
-                    }}>
-                      <span style={{ fontSize: 28, color: 'white' }}>&#128228;</span>
-                    </div>
-                    <div style={{ color: '#1e293b', fontWeight: 600, marginBottom: 4, fontSize: 15 }}>Drop files or click to browse</div>
-                    <div style={{ color: '#94a3b8', fontSize: 13 }}>PDF, DOC, DOCX up to 10MB each</div>
-                  </div>
-                  <button
-                    onClick={() => pop('Upload started!')}
-                    style={{
-                      width: '100%',
-                      padding: '14px 24px',
-                      background: 'white',
-                      color: '#8b5cf6',
-                      border: '2px solid #8b5cf6',
-                      borderRadius: 12,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%)';
-                      e.currentTarget.style.color = 'white';
-                      e.currentTarget.style.boxShadow = '0 4px 15px rgba(139, 92, 246, 0.3)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'white';
-                      e.currentTarget.style.color = '#8b5cf6';
-                      e.currentTarget.style.boxShadow = 'none';
-                    }}
-                  >
-                    &#128228; Upload Files
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>
+        {/* ==================
+            ANALYTICS VIEW
+            ================== */}
+        {view === 'analytics' && (
+          <AnalyticsView
+            API_BASE={API_BASE}
+            openings={openings}
+          />
         )}
 
         {/* ==================
@@ -12765,7 +13658,16 @@ export default function App() {
                                   }
                                   try {
                                     pop('Loading resume...');
-                                    const signedUrl = await uploadAPI.getSignedUrl(selectedCandidate.resumeUrl);
+                                    // Extract the S3 key from the full URL
+                                    const resumeUrl = selectedCandidate.resumeUrl;
+                                    let key = resumeUrl;
+                                    try {
+                                      const urlObj = new URL(resumeUrl);
+                                      key = urlObj.pathname.startsWith('/') ? urlObj.pathname.substring(1) : urlObj.pathname;
+                                    } catch (e) {
+                                      // If not a valid URL, use as-is (might already be a key)
+                                    }
+                                    const signedUrl = await uploadAPI.getSignedUrl(key);
                                     window.open(signedUrl, '_blank');
                                   } catch (error) {
                                     console.error('Error getting resume URL:', error);
