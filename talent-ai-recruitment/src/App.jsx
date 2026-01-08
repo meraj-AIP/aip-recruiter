@@ -1591,6 +1591,452 @@ const ImportCandidatesView = ({ API_BASE, pop, openings, refreshPeople }) => {
   );
 };
 
+// ============================================
+// CANDIDATE PORTAL VIEW COMPONENT (Public)
+// ============================================
+const CandidatePortalView = ({ API_BASE }) => {
+  const [email, setEmail] = useState('');
+  const [phoneLast5, setPhoneLast5] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [candidateData, setCandidateData] = useState(null);
+  const [selectedApp, setSelectedApp] = useState(null);
+  const [appDetails, setAppDetails] = useState(null);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('status');
+  const [message, setMessage] = useState('');
+  const [messageSubject, setMessageSubject] = useState('');
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [openJobs, setOpenJobs] = useState([]);
+  const [toast, setToast] = useState('');
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const getStageColor = (stage) => {
+    const colors = {
+      'shortlisting': '#0ea5e9', 'screening': '#8b5cf6', 'assessment': '#8b5cf6',
+      'assignment-sent': '#f59e0b', 'assignment-submitted': '#8b5cf6', 'interview': '#f59e0b',
+      'offer-pending': '#10b981', 'offer-accepted': '#10b981', 'hired': '#10b981',
+      'rejected': '#94a3b8', 'withdrawn': '#94a3b8'
+    };
+    return colors[stage] || '#64748b';
+  };
+
+  const handleLookup = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) { setError('Please enter your email address'); return; }
+    if (!phoneLast5 || phoneLast5.length !== 5 || !/^\d{5}$/.test(phoneLast5)) {
+      setError('Please enter the last 5 digits of your registered phone number');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setCandidateData(null);
+    setSelectedApp(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/portal/lookup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), phoneLast5 })
+      });
+      const data = await res.json();
+
+      if (data.success && data.data) {
+        setCandidateData(data.data);
+        if (data.data.applications?.length > 0) {
+          setSelectedApp(data.data.applications[0]);
+          fetchAppDetails(data.data.applications[0].id, data.data.token);
+        }
+        fetchOpenJobs();
+      } else {
+        setError(data.error || 'No applications found for this email');
+      }
+    } catch (err) {
+      setError('Unable to connect. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAppDetails = async (appId, token) => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/application/${appId}?email=${encodeURIComponent(email)}&token=${token}`);
+      const data = await res.json();
+      if (data.success) setAppDetails(data.data);
+    } catch (err) {
+      console.error('Error fetching app details:', err);
+    }
+  };
+
+  const fetchOpenJobs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/jobs?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data.success) setOpenJobs(data.data || []);
+    } catch (err) {
+      console.error('Error fetching jobs:', err);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/application/${selectedApp.id}/withdraw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, token: candidateData.token, reason: withdrawReason })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Application withdrawn successfully');
+        setShowWithdrawModal(false);
+        handleLookup({ preventDefault: () => {} });
+      } else {
+        showToast(data.error || 'Failed to withdraw');
+      }
+    } catch (err) {
+      showToast('Failed to withdraw application');
+    }
+  };
+
+  const handleSendMessage = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, token: candidateData.token, applicationId: selectedApp.id, subject: messageSubject, message })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Message sent successfully!');
+        setShowMessageModal(false);
+        setMessage('');
+        setMessageSubject('');
+      } else {
+        showToast(data.error || 'Failed to send message');
+      }
+    } catch (err) {
+      showToast('Failed to send message');
+    }
+  };
+
+  const handleOfferResponse = async (response) => {
+    if (!window.confirm(`Are you sure you want to ${response} this offer?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/portal/application/${selectedApp.id}/respond-offer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, token: candidateData.token, response })
+      });
+      const data = await res.json();
+      showToast(data.message || (response === 'accept' ? 'Offer accepted!' : 'Offer declined'));
+      handleLookup({ preventDefault: () => {} });
+    } catch (err) {
+      showToast('Failed to respond to offer');
+    }
+  };
+
+  const addToCalendar = async (interviewId) => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/interview/${interviewId}/calendar?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data.success) window.open(data.data.googleCalendarUrl, '_blank');
+    } catch (err) {
+      showToast('Failed to add to calendar');
+    }
+  };
+
+  // Progress steps for timeline
+  const progressSteps = ['Application', 'Review', 'Assessment', 'Interview', 'Offer', 'Hired'];
+  const getStepIndex = (stage) => {
+    const map = { 'shortlisting': 1, 'screening': 1, 'assessment': 2, 'assignment-sent': 2, 'assignment-submitted': 2, 'interview': 3, 'offer-pending': 4, 'offer-accepted': 4, 'hired': 5 };
+    return map[stage] || 0;
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)', padding: '40px 20px' }}>
+      {toast && <div style={{ position: 'fixed', top: 20, right: 20, background: '#10b981', color: 'white', padding: '16px 24px', borderRadius: 12, zIndex: 9999, boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>{toast}</div>}
+
+      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <img src="https://cdn.brandfetch.io/idZWCLNWW6/w/48/h/48/theme/dark/logo.png?c=1bxid64Mup7aczewSAYMX&t=1764560488706" alt="AI Planet" style={{ width: 80, height: 80, borderRadius: 20, marginBottom: 20, boxShadow: '0 8px 30px rgba(68, 146, 76, 0.4)' }} />
+          <h1 style={{ color: 'white', fontSize: 32, fontWeight: 700, margin: '0 0 12px' }}>Application Status Portal</h1>
+          <p style={{ color: '#94a3b8', fontSize: 16, margin: 0 }}>Track your application progress at AI Planet</p>
+        </div>
+
+        {/* Search Form */}
+        {!candidateData && (
+          <div style={{ background: 'white', borderRadius: 20, padding: 32, marginBottom: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <form onSubmit={handleLookup}>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b' }}>Email Address</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your.email@example.com" style={{ width: '100%', padding: '16px 20px', border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 16, outline: 'none', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b' }}>Last 5 Digits of Registered Phone Number</label>
+                <input type="text" value={phoneLast5} onChange={e => setPhoneLast5(e.target.value.replace(/\D/g, '').slice(0, 5))} placeholder="e.g., 55219" maxLength={5} style={{ width: '200px', padding: '16px 20px', border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 16, outline: 'none', letterSpacing: '4px', textAlign: 'center', fontWeight: 600 }} />
+                <p style={{ margin: '8px 0 0', fontSize: 13, color: '#64748b' }}>Enter the last 5 digits of the phone number you used while applying</p>
+              </div>
+              <button type="submit" disabled={loading} style={{ padding: '16px 32px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1, width: '100%' }}>
+                {loading ? 'Verifying...' : 'Check Status'}
+              </button>
+            </form>
+            {error && <div style={{ marginTop: 20, padding: '16px 20px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, color: '#dc2626', fontSize: 14 }}>{error}</div>}
+          </div>
+        )}
+
+        {/* Main Content */}
+        {candidateData && (
+          <>
+            {/* Welcome Bar */}
+            <div style={{ background: 'white', borderRadius: 16, padding: '20px 28px', marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#1e293b' }}>Welcome, {candidateData.candidateName}</h2>
+                <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 14 }}>{candidateData.email}</p>
+              </div>
+              <button onClick={() => { setCandidateData(null); setSelectedApp(null); setEmail(''); setPhoneLast5(''); }} style={{ padding: '10px 20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 500 }}>Sign Out</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24 }}>
+              {/* Sidebar - Applications List */}
+              <div style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+                <div style={{ padding: '16px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#64748b' }}>MY APPLICATIONS</h3>
+                </div>
+                {candidateData.applications?.map(app => (
+                  <div key={app.id} onClick={() => { setSelectedApp(app); fetchAppDetails(app.id, candidateData.token); }} style={{ padding: '16px 20px', cursor: 'pointer', background: selectedApp?.id === app.id ? '#f0fdf4' : 'white', borderLeft: selectedApp?.id === app.id ? '3px solid #10b981' : '3px solid transparent', borderBottom: '1px solid #f1f5f9' }}>
+                    <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 14, marginBottom: 4 }}>{app.jobTitle}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: getStageColor(app.stageKey) }}></span>
+                      <span style={{ fontSize: 12, color: '#64748b' }}>{app.stage}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Main Panel */}
+              <div style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+                {selectedApp && (
+                  <>
+                    {/* Tab Navigation */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
+                      {[{ k: 'status', l: 'Status' }, { k: 'timeline', l: 'Timeline' }, { k: 'interviews', l: 'Interviews' }, { k: 'jobs', l: 'Other Jobs' }].map(tab => (
+                        <button key={tab.k} onClick={() => setActiveTab(tab.k)} style={{ flex: 1, padding: '16px', background: activeTab === tab.k ? 'white' : '#f8fafc', border: 'none', borderBottom: activeTab === tab.k ? '2px solid #10b981' : '2px solid transparent', cursor: 'pointer', fontWeight: 600, color: activeTab === tab.k ? '#10b981' : '#64748b', fontSize: 14 }}>{tab.l}</button>
+                      ))}
+                    </div>
+
+                    <div style={{ padding: 24 }}>
+                      {/* Status Tab */}
+                      {activeTab === 'status' && (
+                        <>
+                          <div style={{ marginBottom: 24 }}>
+                            <h2 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: '#1e293b' }}>{selectedApp.jobTitle}</h2>
+                            <p style={{ margin: 0, color: '#64748b' }}>{selectedApp.location} | Applied {new Date(selectedApp.appliedAt).toLocaleDateString()}</p>
+                          </div>
+
+                          {/* Progress Bar */}
+                          <div style={{ marginBottom: 32 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                              {progressSteps.map((step, i) => (
+                                <div key={step} style={{ textAlign: 'center', flex: 1 }}>
+                                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#e2e8f0', color: i <= getStepIndex(selectedApp.stageKey) ? 'white' : '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', fontWeight: 700, fontSize: 14 }}>{i + 1}</div>
+                                  <div style={{ fontSize: 11, color: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#94a3b8', fontWeight: 500 }}>{step}</div>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ height: 4, background: '#e2e8f0', borderRadius: 2, position: 'relative', marginTop: 8 }}>
+                              <div style={{ height: '100%', background: '#10b981', borderRadius: 2, width: `${(getStepIndex(selectedApp.stageKey) / 5) * 100}%`, transition: 'width 0.5s' }}></div>
+                            </div>
+                          </div>
+
+                          {/* Current Status */}
+                          <div style={{ padding: 24, background: `${getStageColor(selectedApp.stageKey)}10`, borderRadius: 16, border: `2px solid ${getStageColor(selectedApp.stageKey)}30`, marginBottom: 24 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                              <div style={{ width: 48, height: 48, background: getStageColor(selectedApp.stageKey), borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
+                                {selectedApp.status === 'action_required' ? '⚡' : selectedApp.status === 'completed' ? '✅' : '📋'}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedApp.stage}</div>
+                                <div style={{ color: '#64748b', fontSize: 13 }}>Last updated: {new Date(selectedApp.lastUpdated).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <p style={{ margin: 0, color: '#475569', lineHeight: 1.6 }}>{selectedApp.statusDescription}</p>
+                          </div>
+
+                          {/* Upcoming Interview */}
+                          {selectedApp.upcomingInterview && (
+                            <div style={{ padding: 20, background: '#fef3c7', borderRadius: 12, marginBottom: 24, border: '1px solid #fcd34d' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                  <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 4 }}>Upcoming Interview</div>
+                                  <div style={{ color: '#a16207', fontSize: 14 }}>
+                                    {selectedApp.upcomingInterview.title} - {new Date(selectedApp.upcomingInterview.date).toLocaleDateString()} at {selectedApp.upcomingInterview.time}
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                  {selectedApp.upcomingInterview.meetingLink && (
+                                    <a href={selectedApp.upcomingInterview.meetingLink} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 16px', background: '#10b981', color: 'white', borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Join Meeting</a>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Offer Response Buttons */}
+                          {selectedApp.stageKey === 'offer-pending' && (
+                            <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+                              <button onClick={() => handleOfferResponse('accept')} style={{ flex: 1, padding: '16px 24px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: 'pointer' }}>Accept Offer</button>
+                              <button onClick={() => handleOfferResponse('decline')} style={{ flex: 1, padding: '16px 24px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: 'pointer' }}>Decline Offer</button>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div style={{ display: 'flex', gap: 12 }}>
+                            <button onClick={() => setShowMessageModal(true)} style={{ flex: 1, padding: '14px 20px', background: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: 10, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>Send Message</button>
+                            {!['hired', 'rejected', 'offer-accepted', 'withdrawn'].includes(selectedApp.stageKey) && (
+                              <button onClick={() => setShowWithdrawModal(true)} style={{ padding: '14px 20px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 10, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>Withdraw</button>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {/* Timeline Tab */}
+                      {activeTab === 'timeline' && appDetails?.timeline && (
+                        <div>
+                          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b' }}>Application Timeline</h3>
+                          <div style={{ position: 'relative', paddingLeft: 32 }}>
+                            <div style={{ position: 'absolute', left: 11, top: 0, bottom: 0, width: 2, background: '#e2e8f0' }}></div>
+                            {appDetails.timeline.map((item, i) => (
+                              <div key={i} style={{ position: 'relative', paddingBottom: 24 }}>
+                                <div style={{ position: 'absolute', left: -32, width: 24, height: 24, borderRadius: '50%', background: item.status === 'completed' ? '#10b981' : item.status === 'upcoming' ? '#f59e0b' : '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>{item.icon || '●'}</div>
+                                <div style={{ padding: '12px 16px', background: '#f8fafc', borderRadius: 10 }}>
+                                  <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>{item.event}</div>
+                                  <div style={{ fontSize: 12, color: '#64748b' }}>{new Date(item.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}{item.time ? ` at ${item.time}` : ''}</div>
+                                  {item.description && <div style={{ fontSize: 13, color: '#475569', marginTop: 8 }}>{item.description}</div>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Interviews Tab */}
+                      {activeTab === 'interviews' && (
+                        <div>
+                          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b' }}>Interviews</h3>
+                          {appDetails?.interviews?.length > 0 ? (
+                            appDetails.interviews.map((interview, i) => (
+                              <div key={i} style={{ padding: 20, background: '#f8fafc', borderRadius: 12, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                  <div>
+                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>{interview.title}</div>
+                                    <div style={{ fontSize: 13, color: '#64748b' }}>
+                                      {new Date(interview.date).toLocaleDateString()} at {interview.time} | {interview.type}
+                                    </div>
+                                    {interview.interviewer && <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>With: {interview.interviewer}</div>}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <span style={{ padding: '4px 12px', background: interview.status === 'Scheduled' ? '#fef3c7' : '#d1fae5', color: interview.status === 'Scheduled' ? '#92400e' : '#065f46', borderRadius: 20, fontSize: 12, fontWeight: 500 }}>{interview.status}</span>
+                                    {interview.status === 'Scheduled' && (
+                                      <>
+                                        <button onClick={() => addToCalendar(interview.id)} style={{ padding: '6px 12px', background: '#ede9fe', color: '#7c3aed', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Add to Calendar</button>
+                                        {interview.meetingLink && <a href={interview.meetingLink} target="_blank" rel="noopener noreferrer" style={{ padding: '6px 12px', background: '#10b981', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 12, fontWeight: 500 }}>Join</a>}
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+                              <div style={{ fontSize: 48, marginBottom: 12 }}>📅</div>
+                              <div>No interviews scheduled yet</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Other Jobs Tab */}
+                      {activeTab === 'jobs' && (
+                        <div>
+                          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b' }}>Open Positions</h3>
+                          {openJobs.length > 0 ? (
+                            openJobs.map(job => (
+                              <div key={job.id} style={{ padding: 20, background: '#f8fafc', borderRadius: 12, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                    <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>{job.title}</div>
+                                    <div style={{ fontSize: 13, color: '#64748b' }}>{job.location} | {job.workSetup}</div>
+                                  </div>
+                                  {job.alreadyApplied ? (
+                                    <span style={{ padding: '8px 16px', background: '#d1fae5', color: '#065f46', borderRadius: 8, fontSize: 13, fontWeight: 500 }}>Applied</span>
+                                  ) : (
+                                    <a href={`/apply/${job.id}`} target="_blank" rel="noopener noreferrer" style={{ padding: '8px 16px', background: '#10b981', color: 'white', borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>Apply Now</a>
+                                  )}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+                              <div style={{ fontSize: 48, marginBottom: 12 }}>💼</div>
+                              <div>No other open positions at the moment</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', marginTop: 40, color: '#64748b', fontSize: 14 }}>
+          <p style={{ margin: 0 }}>Questions? Contact us at <a href="mailto:careers@aiplanet.com" style={{ color: '#10b981' }}>careers@aiplanet.com</a></p>
+        </div>
+      </div>
+
+      {/* Withdraw Modal */}
+      {showWithdrawModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowWithdrawModal(false)}>
+          <div style={{ background: 'white', borderRadius: 20, padding: 32, maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 20px', fontSize: 20, fontWeight: 700, color: '#1e293b' }}>Withdraw Application</h3>
+            <p style={{ color: '#64748b', marginBottom: 20 }}>Are you sure you want to withdraw your application for <strong>{selectedApp?.jobTitle}</strong>?</p>
+            <textarea value={withdrawReason} onChange={e => setWithdrawReason(e.target.value)} placeholder="Reason for withdrawal (optional)" style={{ width: '100%', padding: 16, border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 14, minHeight: 100, resize: 'vertical', marginBottom: 20 }} />
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={() => setShowWithdrawModal(false)} style={{ flex: 1, padding: '14px 24px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button onClick={handleWithdraw} style={{ flex: 1, padding: '14px 24px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 600 }}>Withdraw</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Message Modal */}
+      {showMessageModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowMessageModal(false)}>
+          <div style={{ background: 'white', borderRadius: 20, padding: 32, maxWidth: 500, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 20px', fontSize: 20, fontWeight: 700, color: '#1e293b' }}>Send Message to Recruiter</h3>
+            <input value={messageSubject} onChange={e => setMessageSubject(e.target.value)} placeholder="Subject" style={{ width: '100%', padding: 14, border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 14, marginBottom: 12 }} />
+            <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Your message..." style={{ width: '100%', padding: 16, border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 14, minHeight: 120, resize: 'vertical', marginBottom: 20 }} />
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={() => setShowMessageModal(false)} style={{ flex: 1, padding: '14px 24px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button onClick={handleSendMessage} disabled={!message.trim()} style={{ flex: 1, padding: '14px 24px', background: message.trim() ? '#10b981' : '#e2e8f0', color: message.trim() ? 'white' : '#94a3b8', border: 'none', borderRadius: 12, cursor: message.trim() ? 'pointer' : 'not-allowed', fontWeight: 600 }}>Send Message</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Route to view mapping
 const routeToView = {
   '/': 'login',
@@ -1613,6 +2059,7 @@ const getViewFromPath = (pathname) => {
   if (pathname.startsWith('/apply/')) return 'publicJobDetails';
   if (pathname.startsWith('/applications/candidate/')) return 'profile';
   if (pathname.startsWith('/jobs/')) return 'jobs';
+  if (pathname === '/portal' || pathname === '/check-status') return 'portal';
   return routeToView[pathname] || 'login';
 };
 
@@ -4009,6 +4456,13 @@ export default function App() {
   };
 
   // ==================
+  // CANDIDATE PORTAL (Public)
+  // ==================
+  if (view === 'portal') {
+    return <CandidatePortalView API_BASE={API_BASE} />;
+  }
+
+  // ==================
   // PUBLIC JOB DETAILS PAGE
   // ==================
   if (view === 'publicJobDetails') {
@@ -5045,14 +5499,16 @@ export default function App() {
 
               {/* Phone */}
               <div>
-                <label style={styles.label}>Phone Number</label>
+                <label style={styles.label}>Phone Number *</label>
                 <input
                   type="tel"
                   value={applicationForm.phone}
                   onChange={e => setApplicationForm({...applicationForm, phone: e.target.value})}
-                  placeholder="+1 (555) 123-4567"
+                  placeholder="+91 98765 43210"
                   style={styles.input}
+                  required
                 />
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b' }}>Required for application status verification</p>
               </div>
 
               {/* Graduation Year */}
