@@ -4022,7 +4022,9 @@ export default function App() {
 
   // Derive view from URL path
   const view = useMemo(() => getViewFromPath(location.pathname), [location.pathname]);
-  const [isLoadingPublicJob, setIsLoadingPublicJob] = useState(() => window.location.pathname.startsWith('/apply/'));
+  const [isLoadingPublicJob, setIsLoadingPublicJob] = useState(() =>
+    window.location.pathname.startsWith('/apply/') || window.location.pathname.startsWith('/careers/job/')
+  );
 
   const [candidate, setCandidate] = useState(null);
   const [modal, setModal] = useState(null);
@@ -4609,7 +4611,7 @@ export default function App() {
 
   // Load data when app loads (after login or for public routes)
   useEffect(() => {
-    const isPublicRoute = window.location.pathname.startsWith('/apply/');
+    const isPublicRoute = window.location.pathname.startsWith('/apply/') || window.location.pathname.startsWith('/careers/job/');
     const isLoggedIn = view !== 'login' && view !== 'publicJobDetails';
 
     if (useRealData) {
@@ -4786,7 +4788,7 @@ export default function App() {
   }));
 
   // ==================
-  // URL Routing Effect - Find and set the job for public routes
+  // URL Routing Effect - Find and set the job for public routes (/apply/ and /careers/job/)
   // ==================
   useEffect(() => {
     // IMPORTANT: Don't run this effect if success modal is showing
@@ -4797,9 +4799,10 @@ export default function App() {
 
     const path = window.location.pathname;
     const applyMatch = path.match(/\/apply\/(.+)/);
+    const careersJobMatch = path.match(/\/careers\/job\/(.+)/);
 
-    // Only run for /apply/ routes
-    if (!applyMatch) return;
+    // Only run for /apply/ or /careers/job/ routes
+    if (!applyMatch && !careersJobMatch) return;
 
     // Check if we have real data from database
     const hasRealData = openings.some(job => job._original?.id);
@@ -4808,7 +4811,7 @@ export default function App() {
       return;
     }
 
-    const slugFromUrl = applyMatch[1];
+    const slugFromUrl = applyMatch ? applyMatch[1] : careersJobMatch[1];
 
     // Helper to generate job slug for matching
     const generateSlug = (job) => {
