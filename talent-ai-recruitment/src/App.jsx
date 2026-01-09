@@ -4209,6 +4209,11 @@ export default function App() {
     status: 'passed' // 'passed' or 'failed'
   });
 
+  // AI Assignment Analysis
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showAiAnalysisModal, setShowAiAnalysisModal] = useState(false);
+
   // Offer modal
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [offerCandidate, setOfferCandidate] = useState(null);
@@ -4986,6 +4991,38 @@ export default function App() {
     } catch (error) {
       console.error('Error fetching assignments:', error);
       setCandidateAssignments([]);
+    }
+  };
+
+  // AI Analysis for assignment submission
+  const analyzeAssignmentWithAI = async (assignmentId) => {
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    try {
+      // First check if analysis already exists
+      const existingAnalysis = await assignmentsAPI.getAnalysis(assignmentId);
+      if (existingAnalysis.success && existingAnalysis.data?.ai_analysis) {
+        setAiAnalysis(existingAnalysis.data.ai_analysis);
+        setShowAiAnalysisModal(true);
+        setIsAnalyzing(false);
+        return;
+      }
+
+      // Run new analysis
+      pop('🤖 Analyzing submission with AI...');
+      const result = await assignmentsAPI.analyzeSubmission(assignmentId);
+      if (result.success) {
+        setAiAnalysis(result.analysis);
+        setShowAiAnalysisModal(true);
+        pop('✅ AI Analysis complete!');
+      } else {
+        pop('❌ ' + (result.error || 'Failed to analyze submission'));
+      }
+    } catch (error) {
+      console.error('AI analysis error:', error);
+      pop('❌ Failed to analyze: ' + (error.message || 'Unknown error'));
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -17782,7 +17819,38 @@ export default function App() {
                                 )}
 
                                 {/* Actions */}
-                                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                                  {/* AI Analyze Button - Show for submitted assignments */}
+                                  {assignment.status === 'submitted' && (
+                                    <button
+                                      onClick={() => analyzeAssignmentWithAI(assignment._id || assignment.id)}
+                                      disabled={isAnalyzing}
+                                      style={{
+                                        flex: 1,
+                                        background: isAnalyzing ? '#a78bfa' : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                                        color: 'white',
+                                        border: 'none',
+                                        padding: '10px 12px',
+                                        borderRadius: 8,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: isAnalyzing ? 'wait' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        opacity: isAnalyzing ? 0.7 : 1
+                                      }}
+                                    >
+                                      {isAnalyzing ? (
+                                        <>⟳ Analyzing...</>
+                                      ) : assignment.ai_analysis ? (
+                                        <>📊 View AI</>
+                                      ) : (
+                                        <>🤖 AI Analyze</>
+                                      )}
+                                    </button>
+                                  )}
                                   {!['reviewed', 'passed', 'failed'].includes(assignment.status) && (
                                     <button
                                       onClick={() => {
@@ -19972,8 +20040,71 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Mark Assignment Completed Button - Only show if assignment was sent */}
-                {candidateAssignments.length > 0 && (
+                {/* AI Analysis Button - Only show if assignment was submitted */}
+                {candidateAssignments.length > 0 && candidateAssignments[0].status === 'submitted' && (
+                  <div style={{
+                    padding: 16,
+                    background: 'linear-gradient(135deg, #f5f3ff, #ede9fe)',
+                    borderRadius: 12,
+                    border: '2px solid #a78bfa',
+                    marginBottom: 16
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#5b21b6', marginBottom: 4 }}>
+                          AI-Powered Analysis
+                        </div>
+                        <div style={{ fontSize: 13, color: '#7c3aed' }}>
+                          {candidateAssignments[0].ai_analysis
+                            ? 'View AI analysis results'
+                            : 'Analyze submission with AI for detailed insights'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => analyzeAssignmentWithAI(candidateAssignments[0]._id || candidateAssignments[0].id)}
+                        disabled={isAnalyzing}
+                        style={{
+                          background: isAnalyzing
+                            ? '#a78bfa'
+                            : 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+                          color: 'white',
+                          border: 'none',
+                          padding: '12px 24px',
+                          borderRadius: 10,
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: isAnalyzing ? 'wait' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 2px 8px rgba(139, 92, 246, 0.3)',
+                          opacity: isAnalyzing ? 0.7 : 1
+                        }}
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <span style={{ animation: 'spin 1s linear infinite' }}>⟳</span>
+                            Analyzing...
+                          </>
+                        ) : candidateAssignments[0].ai_analysis ? (
+                          <>
+                            <span>📊</span>
+                            View Analysis
+                          </>
+                        ) : (
+                          <>
+                            <span>🤖</span>
+                            Analyze with AI
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Mark Assignment Completed Button - Only show if assignment was SUBMITTED */}
+                {candidateAssignments.length > 0 && candidateAssignments[0].status === 'submitted' && (
                   <div style={{
                     padding: 16,
                     background: '#f0fdf4',
@@ -22310,6 +22441,835 @@ export default function App() {
                 }}
               >
                 🗑️ Delete Assignment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Analysis Results Modal */}
+      {showAiAnalysisModal && aiAnalysis && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1200,
+          padding: 20
+        }} onClick={() => { setShowAiAnalysisModal(false); setAiAnalysis(null); }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 20,
+            width: '100%',
+            maxWidth: 800,
+            maxHeight: '90vh',
+            overflow: 'hidden',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            animation: 'slideUp 0.3s ease'
+          }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+              padding: '24px 28px',
+              color: 'white'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 14,
+                    background: 'rgba(255,255,255,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 28
+                  }}>
+                    🤖
+                  </div>
+                  <div>
+                    <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>AI Analysis Results</h2>
+                    <p style={{ fontSize: 14, opacity: 0.9, margin: '4px 0 0' }}>
+                      Assignment submission evaluation
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowAiAnalysisModal(false); setAiAnalysis(null); }}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: 10,
+                    padding: 10,
+                    cursor: 'pointer',
+                    color: 'white',
+                    fontSize: 18
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '24px 28px', maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}>
+              {/* Quick Verdict - NEW: Most important for recruiters */}
+              {aiAnalysis.quickVerdict && (
+                <div style={{
+                  padding: 20,
+                  background: aiAnalysis.quickVerdict.wouldYouHire ?
+                    'linear-gradient(135deg, #f0fdf4, #dcfce7)' :
+                    'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                  borderRadius: 16,
+                  marginBottom: 20,
+                  border: `3px solid ${aiAnalysis.quickVerdict.wouldYouHire ? '#22c55e' : '#ef4444'}`
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                    <span style={{ fontSize: 28 }}>{aiAnalysis.quickVerdict.wouldYouHire ? '👍' : '👎'}</span>
+                    <span style={{
+                      fontSize: 18,
+                      fontWeight: 700,
+                      color: aiAnalysis.quickVerdict.wouldYouHire ? '#166534' : '#991b1b'
+                    }}>
+                      {aiAnalysis.quickVerdict.wouldYouHire ? 'RECOMMEND FOR INTERVIEW' : 'NOT RECOMMENDED'}
+                    </span>
+                  </div>
+                  {aiAnalysis.quickVerdict.inOneLine && (
+                    <p style={{
+                      fontSize: 15,
+                      fontWeight: 600,
+                      color: '#1e293b',
+                      margin: '0 0 8px',
+                      fontStyle: 'italic'
+                    }}>
+                      "{aiAnalysis.quickVerdict.inOneLine}"
+                    </p>
+                  )}
+                  {aiAnalysis.quickVerdict.whyOrWhyNot && (
+                    <p style={{ fontSize: 13, color: '#475569', margin: 0 }}>
+                      {aiAnalysis.quickVerdict.whyOrWhyNot}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Score & Recommendation Header */}
+              <div style={{
+                display: 'flex',
+                gap: 20,
+                padding: 20,
+                background: aiAnalysis.overallScore >= 70 ? 'linear-gradient(135deg, #f0fdf4, #dcfce7)' :
+                           aiAnalysis.overallScore >= 55 ? 'linear-gradient(135deg, #fefce8, #fef9c3)' :
+                           'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                borderRadius: 16,
+                marginBottom: 24
+              }}>
+                <div style={{
+                  width: 100,
+                  height: 100,
+                  borderRadius: '50%',
+                  background: aiAnalysis.overallScore >= 70 ? '#22c55e' :
+                             aiAnalysis.overallScore >= 55 ? '#f59e0b' : '#ef4444',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'white',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  flexShrink: 0
+                }}>
+                  <div style={{ fontSize: 32, fontWeight: 700 }}>{aiAnalysis.overallScore}</div>
+                  <div style={{ fontSize: 10, opacity: 0.9 }}>/ 100</div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <span style={{
+                      padding: '6px 14px',
+                      background: aiAnalysis.recommendation?.includes('Hire') ? '#22c55e' :
+                                 aiAnalysis.recommendation === 'Needs Discussion' ? '#f59e0b' : '#ef4444',
+                      color: 'white',
+                      borderRadius: 20,
+                      fontSize: 13,
+                      fontWeight: 600
+                    }}>
+                      {aiAnalysis.recommendation || aiAnalysis.finalVerdict?.decision || 'N/A'}
+                    </span>
+                    {aiAnalysis.confidenceLevel && (
+                      <span style={{ fontSize: 12, color: '#64748b' }}>
+                        {aiAnalysis.confidenceLevel} Confidence
+                      </span>
+                    )}
+                    {aiAnalysis.comparativeAssessment?.experienceLevelMatch && (
+                      <span style={{
+                        padding: '3px 10px',
+                        background: aiAnalysis.comparativeAssessment.experienceLevelMatch === 'Exceeds' ? '#dbeafe' :
+                                   aiAnalysis.comparativeAssessment.experienceLevelMatch === 'Matches' ? '#f0fdf4' :
+                                   '#fee2e2',
+                        color: aiAnalysis.comparativeAssessment.experienceLevelMatch === 'Exceeds' ? '#1e40af' :
+                               aiAnalysis.comparativeAssessment.experienceLevelMatch === 'Matches' ? '#166534' : '#991b1b',
+                        borderRadius: 6, fontSize: 11, fontWeight: 600
+                      }}>
+                        {aiAnalysis.comparativeAssessment.experienceLevelMatch} Expected Level
+                      </span>
+                    )}
+                  </div>
+                  {aiAnalysis.executiveSummary && (
+                    <p style={{ fontSize: 14, color: '#334155', lineHeight: 1.6, margin: 0 }}>
+                      {aiAnalysis.executiveSummary}
+                    </p>
+                  )}
+                  {/* Score Legend */}
+                  <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 10, color: '#64748b' }}>
+                    <span>85+ Exceptional</span>
+                    <span>70-84 Good</span>
+                    <span>55-69 Borderline</span>
+                    <span>&lt;55 Below</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Authenticity Check - NEW: Critical for recruiters */}
+              {aiAnalysis.authenticityCheck && (
+                <div style={{
+                  marginBottom: 24,
+                  padding: 16,
+                  background: aiAnalysis.authenticityCheck.likelyOriginalWork ? '#f0fdf4' : '#fef2f2',
+                  borderRadius: 12,
+                  border: `2px solid ${aiAnalysis.authenticityCheck.likelyOriginalWork ? '#22c55e' : '#ef4444'}`
+                }}>
+                  <h3 style={{
+                    fontSize: 15, fontWeight: 600,
+                    color: aiAnalysis.authenticityCheck.likelyOriginalWork ? '#166534' : '#991b1b',
+                    marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8
+                  }}>
+                    <span>{aiAnalysis.authenticityCheck.likelyOriginalWork ? '✅' : '⚠️'}</span>
+                    Authenticity Check: {aiAnalysis.authenticityCheck.likelyOriginalWork ? 'Appears Original' : 'Concerns Found'}
+                  </h3>
+                  {aiAnalysis.authenticityCheck.evidenceOfEffort && (
+                    <p style={{ fontSize: 13, color: '#334155', margin: '0 0 8px' }}>
+                      <strong>Evidence:</strong> {aiAnalysis.authenticityCheck.evidenceOfEffort}
+                    </p>
+                  )}
+                  {aiAnalysis.authenticityCheck.commitPatternAnalysis && (
+                    <p style={{ fontSize: 13, color: '#334155', margin: '0 0 8px' }}>
+                      <strong>Commit Pattern:</strong> {aiAnalysis.authenticityCheck.commitPatternAnalysis}
+                    </p>
+                  )}
+                  {aiAnalysis.authenticityCheck.concerns && aiAnalysis.authenticityCheck.concerns.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <strong style={{ fontSize: 12, color: '#991b1b' }}>Concerns:</strong>
+                      <ul style={{ margin: '4px 0 0', paddingLeft: 20, fontSize: 12, color: '#dc2626' }}>
+                        {aiAnalysis.authenticityCheck.concerns.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Submission Overview */}
+              {aiAnalysis.submissionOverview && Object.keys(aiAnalysis.submissionOverview).length > 0 && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#1e293b', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>📋</span> Submission Overview
+                  </h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+                    {aiAnalysis.submissionOverview.effortLevel && (
+                      <span style={{
+                        padding: '4px 12px',
+                        background: aiAnalysis.submissionOverview.effortLevel.includes('High') ? '#dcfce7' :
+                                   aiAnalysis.submissionOverview.effortLevel.includes('Good') ? '#dbeafe' :
+                                   aiAnalysis.submissionOverview.effortLevel === 'Adequate' ? '#fef9c3' : '#fee2e2',
+                        color: aiAnalysis.submissionOverview.effortLevel.includes('High') ? '#166534' :
+                               aiAnalysis.submissionOverview.effortLevel.includes('Good') ? '#1e40af' :
+                               aiAnalysis.submissionOverview.effortLevel === 'Adequate' ? '#854d0e' : '#991b1b',
+                        borderRadius: 6, fontSize: 12, fontWeight: 600
+                      }}>
+                        {aiAnalysis.submissionOverview.effortLevel}
+                      </span>
+                    )}
+                  </div>
+                  {aiAnalysis.submissionOverview.firstImpression && (
+                    <p style={{ fontSize: 13, color: '#475569', margin: '0 0 8px', fontStyle: 'italic' }}>
+                      <strong>First Impression:</strong> "{aiAnalysis.submissionOverview.firstImpression}"
+                    </p>
+                  )}
+                  {aiAnalysis.submissionOverview.whatWasSubmitted && (
+                    <p style={{ fontSize: 13, color: '#475569', margin: '0 0 8px' }}>
+                      <strong>Submitted:</strong> {aiAnalysis.submissionOverview.whatWasSubmitted}
+                    </p>
+                  )}
+                  {aiAnalysis.submissionOverview.whatWasMissing && aiAnalysis.submissionOverview.whatWasMissing !== 'Nothing - complete submission' && (
+                    <p style={{ fontSize: 13, color: '#dc2626', margin: 0 }}>
+                      <strong>Missing:</strong> {aiAnalysis.submissionOverview.whatWasMissing}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Green Flags & Red Flags */}
+              {((aiAnalysis.greenFlags && aiAnalysis.greenFlags.length > 0) || (aiAnalysis.redFlags && aiAnalysis.redFlags.length > 0)) && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+                  {aiAnalysis.greenFlags && aiAnalysis.greenFlags.length > 0 && (
+                    <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 12, border: '2px solid #22c55e' }}>
+                      <h4 style={{ fontSize: 14, fontWeight: 600, color: '#166534', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>🌟</span> Green Flags
+                      </h4>
+                      {aiAnalysis.greenFlags.map((flag, idx) => (
+                        <div key={idx} style={{ fontSize: 13, color: '#15803d', marginBottom: 6, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <span>✓</span><span>{flag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {aiAnalysis.redFlags && aiAnalysis.redFlags.length > 0 && (
+                    <div style={{ padding: 16, background: '#fef2f2', borderRadius: 12, border: '2px solid #ef4444' }}>
+                      <h4 style={{ fontSize: 14, fontWeight: 600, color: '#991b1b', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>⚠️</span> Red Flags
+                      </h4>
+                      {aiAnalysis.redFlags.map((flag, idx) => (
+                        <div key={idx} style={{ fontSize: 13, color: '#dc2626', marginBottom: 6, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <span>!</span><span>{flag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Criteria Scores - Recruiter Focused */}
+              {aiAnalysis.criteriaScores && Object.keys(aiAnalysis.criteriaScores).length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#1e293b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>📊</span> Evaluation Breakdown
+                  </h3>
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    {Object.entries(aiAnalysis.criteriaScores).map(([key, criteria], idx) => {
+                      // Format the key nicely
+                      const formattedKey = key
+                        .replace(/([A-Z])/g, ' $1')
+                        .replace(/And/g, '&')
+                        .trim();
+                      const isRedFlagsCheck = key.toLowerCase().includes('redflag');
+
+                      return (
+                        <div key={idx} style={{
+                          padding: 16,
+                          background: isRedFlagsCheck
+                            ? (criteria.score >= 80 ? '#f0fdf4' : '#fef2f2')
+                            : '#f8fafc',
+                          borderRadius: 12,
+                          border: `1px solid ${isRedFlagsCheck
+                            ? (criteria.score >= 80 ? '#22c55e' : '#ef4444')
+                            : '#e2e8f0'}`
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: '#334155' }}>
+                              {formattedKey}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {criteria.weight && <span style={{ fontSize: 11, color: '#94a3b8' }}>{criteria.weight}% weight</span>}
+                              <span style={{
+                                padding: '4px 12px',
+                                background: criteria.score >= 70 ? '#dcfce7' : criteria.score >= 55 ? '#fef9c3' : '#fee2e2',
+                                color: criteria.score >= 70 ? '#166534' : criteria.score >= 55 ? '#854d0e' : '#991b1b',
+                                borderRadius: 20,
+                                fontSize: 13,
+                                fontWeight: 600
+                              }}>
+                                {criteria.score}/100
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginBottom: 10 }}>
+                            <div style={{
+                              height: '100%',
+                              width: `${criteria.score}%`,
+                              background: criteria.score >= 70 ? '#22c55e' : criteria.score >= 55 ? '#f59e0b' : '#ef4444',
+                              borderRadius: 3
+                            }} />
+                          </div>
+                          {/* New verdict field */}
+                          {criteria.verdict && (
+                            <p style={{ fontSize: 13, color: '#334155', fontWeight: 500, lineHeight: 1.5, margin: '0 0 8px' }}>
+                              {criteria.verdict}
+                            </p>
+                          )}
+                          {/* Legacy feedback field */}
+                          {criteria.feedback && !criteria.verdict && (
+                            <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.5, margin: '0 0 8px' }}>{criteria.feedback}</p>
+                          )}
+                          {/* Evidence points */}
+                          {(criteria.evidence || criteria.evidencePoints) && (criteria.evidence || criteria.evidencePoints).length > 0 && (
+                            <div style={{ marginTop: 8, padding: 10, background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Evidence:</div>
+                              {(criteria.evidence || criteria.evidencePoints).map((point, i) => (
+                                <div key={i} style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>• {point}</div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Bonuses */}
+                          {criteria.bonuses && criteria.bonuses.length > 0 && (
+                            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {criteria.bonuses.map((bonus, i) => (
+                                <span key={i} style={{ padding: '3px 8px', background: '#dbeafe', color: '#1e40af', borderRadius: 4, fontSize: 11 }}>✨ {bonus}</span>
+                              ))}
+                            </div>
+                          )}
+                          {/* Red flag concerns */}
+                          {criteria.concerns && criteria.concerns.length > 0 && (
+                            <div style={{ marginTop: 8, padding: 10, background: '#fef2f2', borderRadius: 8 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: '#991b1b', marginBottom: 6 }}>Concerns:</div>
+                              {criteria.concerns.map((concern, i) => (
+                                <div key={i} style={{ fontSize: 12, color: '#dc2626', marginBottom: 4 }}>⚠️ {concern}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Technical Deep Dive */}
+              {aiAnalysis.technicalDeepDive && Object.keys(aiAnalysis.technicalDeepDive).length > 0 && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#f0f9ff', borderRadius: 12, border: '1px solid #bae6fd' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#0369a1', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>🔍</span> Technical Assessment
+                  </h3>
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    {(aiAnalysis.technicalDeepDive.techStackChoice || aiAnalysis.technicalDeepDive.technologyChoices) && (
+                      <div><strong style={{ fontSize: 12, color: '#0c4a6e' }}>Tech Stack Choice:</strong>
+                        <p style={{ fontSize: 13, color: '#0369a1', margin: '4px 0 0', lineHeight: 1.5 }}>{aiAnalysis.technicalDeepDive.techStackChoice || aiAnalysis.technicalDeepDive.technologyChoices}</p>
+                      </div>
+                    )}
+                    {(aiAnalysis.technicalDeepDive.architectureQuality || aiAnalysis.technicalDeepDive.architectureAssessment) && (
+                      <div><strong style={{ fontSize: 12, color: '#0c4a6e' }}>Architecture Quality:</strong>
+                        <p style={{ fontSize: 13, color: '#0369a1', margin: '4px 0 0', lineHeight: 1.5 }}>{aiAnalysis.technicalDeepDive.architectureQuality || aiAnalysis.technicalDeepDive.architectureAssessment}</p>
+                      </div>
+                    )}
+                    {(aiAnalysis.technicalDeepDive.performanceConsiderations || aiAnalysis.technicalDeepDive.performanceNotes) && (
+                      <div><strong style={{ fontSize: 12, color: '#0c4a6e' }}>Performance:</strong>
+                        <p style={{ fontSize: 13, color: '#0369a1', margin: '4px 0 0', lineHeight: 1.5 }}>{aiAnalysis.technicalDeepDive.performanceConsiderations || aiAnalysis.technicalDeepDive.performanceNotes}</p>
+                      </div>
+                    )}
+                    {/* Security Issues - highlighted in red if present */}
+                    {aiAnalysis.technicalDeepDive.securityIssues && aiAnalysis.technicalDeepDive.securityIssues.length > 0 && (
+                      <div style={{ padding: 12, background: '#fef2f2', borderRadius: 8 }}>
+                        <strong style={{ fontSize: 12, color: '#991b1b' }}>⚠️ Security Issues Found:</strong>
+                        <ul style={{ margin: '6px 0 0', paddingLeft: 20, fontSize: 13, color: '#dc2626' }}>
+                          {aiAnalysis.technicalDeepDive.securityIssues.map((issue, i) => (
+                            <li key={i}>{issue}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {/* Legacy security field */}
+                    {aiAnalysis.technicalDeepDive.securityConsiderations && !aiAnalysis.technicalDeepDive.securityIssues && (
+                      <div><strong style={{ fontSize: 12, color: '#0c4a6e' }}>Security:</strong>
+                        <p style={{ fontSize: 13, color: '#0369a1', margin: '4px 0 0', lineHeight: 1.5 }}>{aiAnalysis.technicalDeepDive.securityConsiderations}</p>
+                      </div>
+                    )}
+                    {aiAnalysis.technicalDeepDive.codePatterns && aiAnalysis.technicalDeepDive.codePatterns.length > 0 && (
+                      <div>
+                        <strong style={{ fontSize: 12, color: '#0c4a6e' }}>Code Patterns:</strong>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                          {aiAnalysis.technicalDeepDive.codePatterns.map((pattern, i) => (
+                            <span key={i} style={{ padding: '4px 10px', background: '#dbeafe', color: '#1e40af', borderRadius: 6, fontSize: 12 }}>{pattern}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Strengths & Areas for Improvement - Enhanced */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+                {aiAnalysis.strengths && aiAnalysis.strengths.length > 0 && (
+                  <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 12, border: '1px solid #bbf7d0' }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: '#166534', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>✅</span> Strengths
+                    </h4>
+                    {aiAnalysis.strengths.map((strength, idx) => (
+                      <div key={idx} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: idx < aiAnalysis.strengths.length - 1 ? '1px solid #bbf7d0' : 'none' }}>
+                        <div style={{ fontSize: 13, color: '#15803d', fontWeight: 500 }}>
+                          {typeof strength === 'object' ? strength.point : strength}
+                        </div>
+                        {typeof strength === 'object' && strength.impact && (
+                          <span style={{ fontSize: 11, padding: '2px 6px', background: strength.impact === 'High' ? '#22c55e' : '#86efac', color: 'white', borderRadius: 4, marginTop: 4, display: 'inline-block' }}>
+                            {strength.impact} Impact
+                          </span>
+                        )}
+                        {typeof strength === 'object' && strength.details && (
+                          <p style={{ fontSize: 12, color: '#16a34a', margin: '4px 0 0', lineHeight: 1.4 }}>{strength.details}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiAnalysis.areasForImprovement && aiAnalysis.areasForImprovement.length > 0 && (
+                  <div style={{ padding: 16, background: '#fef3c7', borderRadius: 12, border: '1px solid #fde047' }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: '#92400e', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>💡</span> Areas for Improvement
+                    </h4>
+                    {aiAnalysis.areasForImprovement.map((area, idx) => (
+                      <div key={idx} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: idx < aiAnalysis.areasForImprovement.length - 1 ? '1px solid #fde047' : 'none' }}>
+                        <div style={{ fontSize: 13, color: '#92400e', fontWeight: 500 }}>
+                          {typeof area === 'object' ? area.point : area}
+                        </div>
+                        {typeof area === 'object' && area.severity && (
+                          <span style={{
+                            fontSize: 11, padding: '2px 6px',
+                            background: area.severity === 'Critical' ? '#ef4444' : area.severity === 'Major' ? '#f59e0b' : '#84cc16',
+                            color: 'white', borderRadius: 4, marginTop: 4, display: 'inline-block'
+                          }}>
+                            {area.severity}
+                          </span>
+                        )}
+                        {typeof area === 'object' && area.suggestion && (
+                          <p style={{ fontSize: 12, color: '#b45309', margin: '4px 0 0', lineHeight: 1.4 }}>💡 {area.suggestion}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Skills Assessment */}
+              {aiAnalysis.skillsAssessment && Object.keys(aiAnalysis.skillsAssessment).length > 0 && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#faf5ff', borderRadius: 12, border: '1px solid #e9d5ff' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#7c3aed', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>🎯</span> Skills Assessment
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    {aiAnalysis.skillsAssessment.demonstratedSkills && aiAnalysis.skillsAssessment.demonstratedSkills.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#6b21a8', marginBottom: 8 }}>Demonstrated Skills:</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {aiAnalysis.skillsAssessment.demonstratedSkills.map((skill, i) => (
+                            <span key={i} style={{ padding: '4px 10px', background: '#e9d5ff', color: '#7c3aed', borderRadius: 6, fontSize: 12 }}>{skill}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {aiAnalysis.skillsAssessment.skillGaps && aiAnalysis.skillsAssessment.skillGaps.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#6b21a8', marginBottom: 8 }}>Skill Gaps:</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {aiAnalysis.skillsAssessment.skillGaps.map((skill, i) => (
+                            <span key={i} style={{ padding: '4px 10px', background: '#fecaca', color: '#dc2626', borderRadius: 6, fontSize: 12 }}>{skill}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {aiAnalysis.skillsAssessment.learningPotential && (
+                    <div style={{ marginTop: 12, padding: 10, background: '#fff', borderRadius: 8 }}>
+                      <strong style={{ fontSize: 12, color: '#6b21a8' }}>Learning Potential:</strong>
+                      <p style={{ fontSize: 13, color: '#7c3aed', margin: '4px 0 0' }}>{aiAnalysis.skillsAssessment.learningPotential}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Interview Recommendations */}
+              {aiAnalysis.interviewRecommendations && Object.keys(aiAnalysis.interviewRecommendations).length > 0 && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#eff6ff', borderRadius: 12, border: '1px solid #bfdbfe' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#1e40af', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>🎤</span> Interview Recommendations
+                  </h3>
+                  {aiAnalysis.interviewRecommendations.shouldProceed !== undefined && (
+                    <div style={{ marginBottom: 12 }}>
+                      <span style={{
+                        padding: '6px 14px',
+                        background: aiAnalysis.interviewRecommendations.shouldProceed ? '#22c55e' : '#ef4444',
+                        color: 'white', borderRadius: 20, fontSize: 13, fontWeight: 600
+                      }}>
+                        {aiAnalysis.interviewRecommendations.shouldProceed ? '✓ Proceed to Interview' : '✗ Do Not Proceed'}
+                      </span>
+                    </div>
+                  )}
+                  {aiAnalysis.interviewRecommendations.interviewFocus && aiAnalysis.interviewRecommendations.interviewFocus.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>Focus Areas:</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {aiAnalysis.interviewRecommendations.interviewFocus.map((focus, i) => (
+                          <span key={i} style={{ padding: '4px 10px', background: '#dbeafe', color: '#1e40af', borderRadius: 6, fontSize: 12 }}>{focus}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {aiAnalysis.interviewRecommendations.questionsToAsk && aiAnalysis.interviewRecommendations.questionsToAsk.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#1e40af', marginBottom: 8 }}>Suggested Questions:</div>
+                      {aiAnalysis.interviewRecommendations.questionsToAsk.map((q, idx) => (
+                        <div key={idx} style={{ padding: 12, background: 'white', borderRadius: 8, marginBottom: 8, border: '1px solid #dbeafe' }}>
+                          <div style={{ fontSize: 13, color: '#1e3a8a', fontWeight: 500 }}>
+                            {idx + 1}. {typeof q === 'object' ? q.question : q}
+                          </div>
+                          {typeof q === 'object' && q.purpose && (
+                            <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 4, fontStyle: 'italic' }}>Purpose: {q.purpose}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* GitHub Repository Analysis - Success */}
+              {aiAnalysis.githubAnalysis && aiAnalysis.githubAnalysis.analysisStatus === 'success' && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#334155', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>📁</span> GitHub Repository Details
+                    {aiAnalysis.githubAnalysis.repoUrl && (
+                      <a href={aiAnalysis.githubAnalysis.repoUrl} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', marginLeft: 'auto' }}>
+                        View Repo ↗
+                      </a>
+                    )}
+                  </h3>
+
+                  {/* Data completeness indicator */}
+                  <div style={{ marginBottom: 12, padding: 8, background: '#e0f2fe', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{
+                      width: 40, height: 40, borderRadius: '50%',
+                      background: `conic-gradient(#3b82f6 ${aiAnalysis.githubAnalysis.dataCompleteness * 3.6}deg, #e2e8f0 0deg)`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#e0f2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 }}>
+                        {aiAnalysis.githubAnalysis.dataCompleteness}%
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#0369a1' }}>
+                      <strong>Data Retrieved:</strong> {aiAnalysis.githubAnalysis.dataCompleteness}% complete
+                      {aiAnalysis.githubAnalysis.isFork && <span style={{ color: '#f59e0b', marginLeft: 8 }}>⚠️ Forked Repository</span>}
+                    </div>
+                  </div>
+
+                  {/* Stats Grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 12 }}>
+                    <div style={{ padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#334155' }}>{aiAnalysis.githubAnalysis.recentCommits || 0}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Commits</div>
+                    </div>
+                    <div style={{ padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#334155' }}>{aiAnalysis.githubAnalysis.stars || 0}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Stars</div>
+                    </div>
+                    <div style={{ padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#334155' }}>{aiAnalysis.githubAnalysis.forks || 0}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Forks</div>
+                    </div>
+                    <div style={{ padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#334155' }}>{aiAnalysis.githubAnalysis.openIssues || 0}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Issues</div>
+                    </div>
+                    <div style={{ padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>{aiAnalysis.githubAnalysis.size ? Math.round(aiAnalysis.githubAnalysis.size/1024) + 'MB' : '-'}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>Size</div>
+                    </div>
+                  </div>
+
+                  {/* Quality Indicators */}
+                  {aiAnalysis.githubAnalysis.qualityIndicators && (
+                    <div style={{ marginBottom: 12, padding: 10, background: 'white', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>Quality Indicators:</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {Object.entries(aiAnalysis.githubAnalysis.qualityIndicators).map(([key, value], i) => (
+                          <span key={i} style={{
+                            padding: '4px 10px',
+                            background: value ? '#dcfce7' : '#fee2e2',
+                            color: value ? '#166534' : '#991b1b',
+                            borderRadius: 6, fontSize: 11, fontWeight: 500
+                          }}>
+                            {value ? '✓' : '✗'} {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Languages */}
+                  {aiAnalysis.githubAnalysis.languages && Object.keys(aiAnalysis.githubAnalysis.languages).length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Languages Used:</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {Object.entries(aiAnalysis.githubAnalysis.languages).slice(0, 8).map(([lang, bytes], i) => (
+                          <span key={i} style={{ padding: '4px 10px', background: '#e2e8f0', color: '#334155', borderRadius: 6, fontSize: 12 }}>
+                            {lang} ({Math.round(bytes/1024)}KB)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dependencies */}
+                  {aiAnalysis.githubAnalysis.dependencies && (
+                    <div style={{ marginBottom: 10, padding: 10, background: '#fefce8', borderRadius: 8, border: '1px solid #fef08a' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#854d0e', marginBottom: 6 }}>
+                        Dependencies (from package.json):
+                      </div>
+                      <div style={{ fontSize: 11, color: '#713f12' }}>
+                        <div><strong>Production ({aiAnalysis.githubAnalysis.dependencies.dependencies?.length || 0}):</strong> {aiAnalysis.githubAnalysis.dependencies.dependencies?.slice(0, 8).join(', ') || 'None'}{aiAnalysis.githubAnalysis.dependencies.dependencies?.length > 8 ? '...' : ''}</div>
+                        <div style={{ marginTop: 4 }}><strong>Dev ({aiAnalysis.githubAnalysis.dependencies.devDependencies?.length || 0}):</strong> {aiAnalysis.githubAnalysis.dependencies.devDependencies?.slice(0, 6).join(', ') || 'None'}{aiAnalysis.githubAnalysis.dependencies.devDependencies?.length > 6 ? '...' : ''}</div>
+                        <div style={{ marginTop: 4 }}><strong>Scripts:</strong> {aiAnalysis.githubAnalysis.dependencies.scripts?.join(', ') || 'None'}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent Commits */}
+                  {aiAnalysis.githubAnalysis.commitHistory && aiAnalysis.githubAnalysis.commitHistory.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Recent Commits:</div>
+                      <div style={{ maxHeight: 120, overflowY: 'auto', background: 'white', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                        {aiAnalysis.githubAnalysis.commitHistory.map((commit, i) => (
+                          <div key={i} style={{ padding: '6px 10px', borderBottom: '1px solid #f1f5f9', fontSize: 11 }}>
+                            <div style={{ color: '#334155', fontWeight: 500 }}>{commit.message}</div>
+                            <div style={{ color: '#94a3b8', fontSize: 10 }}>{commit.author} • {new Date(commit.date).toLocaleDateString()}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* File Structure */}
+                  {aiAnalysis.githubAnalysis.fileStructure && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>File Structure:</div>
+                      <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.6 }}>{aiAnalysis.githubAnalysis.fileStructure}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* GitHub Repository Analysis - Error/Failed */}
+              {aiAnalysis.githubAnalysis && aiAnalysis.githubAnalysis.error && (
+                <div style={{ marginBottom: 24, padding: 16, background: '#fef2f2', borderRadius: 12, border: '1px solid #fecaca' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: '#991b1b', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>⚠️</span> GitHub Repository Analysis Issue
+                  </h3>
+
+                  <div style={{ padding: 12, background: 'white', borderRadius: 8, marginBottom: 12 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', marginBottom: 4 }}>
+                      {aiAnalysis.githubAnalysis.errorType === 'NOT_FOUND_OR_PRIVATE' ? '🔒 Repository Not Accessible' :
+                       aiAnalysis.githubAnalysis.errorType === 'INVALID_URL_FORMAT' ? '❌ Invalid URL' :
+                       aiAnalysis.githubAnalysis.errorType === 'RATE_LIMITED' ? '⏳ Rate Limited' :
+                       '⚠️ Analysis Failed'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#7f1d1d' }}>{aiAnalysis.githubAnalysis.error}</div>
+                    {aiAnalysis.githubAnalysis.providedUrl && (
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>URL: {aiAnalysis.githubAnalysis.providedUrl}</div>
+                    )}
+                  </div>
+
+                  {aiAnalysis.githubAnalysis.possibleReasons && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#991b1b', marginBottom: 4 }}>Possible Reasons:</div>
+                      <ul style={{ margin: 0, paddingLeft: 20, fontSize: 11, color: '#7f1d1d' }}>
+                        {aiAnalysis.githubAnalysis.possibleReasons.map((reason, i) => (
+                          <li key={i} style={{ marginBottom: 2 }}>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {aiAnalysis.githubAnalysis.actionItems && (
+                    <div style={{ padding: 10, background: '#fef9c3', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#854d0e', marginBottom: 4 }}>Suggested Actions:</div>
+                      <ul style={{ margin: 0, paddingLeft: 20, fontSize: 11, color: '#713f12' }}>
+                        {aiAnalysis.githubAnalysis.actionItems.map((action, i) => (
+                          <li key={i} style={{ marginBottom: 2 }}>{action}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {aiAnalysis.githubAnalysis.rateLimitResetsAt && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#64748b' }}>
+                      Rate limit resets at: {aiAnalysis.githubAnalysis.rateLimitResetsAt}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Final Verdict */}
+              {aiAnalysis.finalVerdict && Object.keys(aiAnalysis.finalVerdict).length > 0 && (
+                <div style={{
+                  padding: 20,
+                  background: aiAnalysis.finalVerdict.decision?.includes('Hire') ? 'linear-gradient(135deg, #f0fdf4, #dcfce7)' :
+                             aiAnalysis.finalVerdict.decision === 'Needs Discussion' ? 'linear-gradient(135deg, #fefce8, #fef9c3)' :
+                             'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                  borderRadius: 12,
+                  border: `2px solid ${aiAnalysis.finalVerdict.decision?.includes('Hire') ? '#22c55e' : aiAnalysis.finalVerdict.decision === 'Needs Discussion' ? '#f59e0b' : '#ef4444'}`
+                }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1e293b', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>⚖️</span> Final Verdict
+                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                    <span style={{
+                      padding: '8px 16px',
+                      background: aiAnalysis.finalVerdict.decision?.includes('Hire') ? '#22c55e' :
+                                 aiAnalysis.finalVerdict.decision === 'Needs Discussion' ? '#f59e0b' : '#ef4444',
+                      color: 'white', borderRadius: 8, fontSize: 15, fontWeight: 700
+                    }}>
+                      {aiAnalysis.finalVerdict.decision}
+                    </span>
+                    {aiAnalysis.finalVerdict.confidence && (
+                      <span style={{ fontSize: 13, color: '#64748b' }}>({aiAnalysis.finalVerdict.confidence} Confidence)</span>
+                    )}
+                  </div>
+                  {aiAnalysis.finalVerdict.reasoning && (
+                    <p style={{ fontSize: 14, color: '#334155', lineHeight: 1.6, margin: '0 0 12px' }}>{aiAnalysis.finalVerdict.reasoning}</p>
+                  )}
+                  {aiAnalysis.finalVerdict.nextSteps && (
+                    <div style={{ padding: 12, background: 'rgba(255,255,255,0.7)', borderRadius: 8 }}>
+                      <strong style={{ fontSize: 12, color: '#475569' }}>Recommended Next Steps:</strong>
+                      <p style={{ fontSize: 13, color: '#334155', margin: '4px 0 0' }}>{aiAnalysis.finalVerdict.nextSteps}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Comparative Notes */}
+              {aiAnalysis.comparativeNotes && (
+                <div style={{ marginTop: 16, padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>Comparative Notes:</div>
+                  <p style={{ fontSize: 13, color: '#475569', margin: 0, lineHeight: 1.5 }}>{aiAnalysis.comparativeNotes}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '16px 28px',
+              borderTop: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 12
+            }}>
+              <button
+                onClick={() => { setShowAiAnalysisModal(false); setAiAnalysis(null); }}
+                style={{
+                  padding: '12px 24px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: '#64748b',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
               </button>
             </div>
           </div>

@@ -543,4 +543,117 @@ router.get('/by-application/:applicationId', async (req, res) => {
   }
 });
 
+// =====================================================
+// AI ASSIGNMENT ANALYSIS
+// =====================================================
+
+const { analyzeAssignmentSubmission } = require('../services/aiScoring');
+
+// POST /api/assignments/candidate/:id/analyze - AI analyze assignment submission
+router.post('/candidate/:id/analyze', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const assignment = await CandidateAssignment.findById(id)
+      .populate({
+        path: 'application_id',
+        populate: [
+          { path: 'candidate_id', select: 'name email' },
+          { path: 'job_id', select: 'title skills experience_min experience_max' }
+        ]
+      })
+      .populate('assignment_template_id')
+      .lean();
+
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+
+    if (assignment.status !== 'submitted' && assignment.status !== 'reviewed') {
+      return res.status(400).json({ error: 'Assignment has not been submitted yet' });
+    }
+
+    // Prepare analysis parameters
+    const params = {
+      assignmentTitle: assignment.assignment_template_id?.name || assignment.assignment_name || 'Technical Assignment',
+      assignmentDescription: assignment.assignment_template_id?.instructions || assignment.instructions || '',
+      submissionLinks: assignment.submission_links || [],
+      submissionNotes: assignment.submission_notes || '',
+      submissionFiles: assignment.submission_files || [],
+      jobDetails: {
+        title: assignment.application_id?.job_id?.title,
+        skills: assignment.application_id?.job_id?.skills,
+        experienceMin: assignment.application_id?.job_id?.experience_min,
+        experienceMax: assignment.application_id?.job_id?.experience_max
+      },
+      candidateInfo: {
+        name: assignment.application_id?.candidate_id?.name,
+        email: assignment.application_id?.candidate_id?.email
+      }
+    };
+
+    // Run AI analysis
+    const result = await analyzeAssignmentSubmission(params);
+
+    // Store analysis result in the assignment
+    await CandidateAssignment.findByIdAndUpdate(id, {
+      ai_analysis: result.analysis,
+      ai_analyzed_at: new Date()
+    });
+
+    // Log activity
+    await new ActivityLog({
+      application_id: assignment.application_id._id,
+      action: 'assignment_ai_analyzed',
+      description: `AI analyzed assignment submission. Score: ${result.analysis.overallScore}/100, Recommendation: ${result.analysis.recommendation}`,
+      metadata: {
+        assignmentId: id,
+        overallScore: result.analysis.overallScore,
+        recommendation: result.analysis.recommendation
+      }
+    }).save();
+
+    res.json({
+      success: true,
+      analysis: result.analysis,
+      analyzedAt: result.analyzedAt
+    });
+  } catch (error) {
+    console.error('Error analyzing assignment:', error);
+    res.status(500).json({ error: 'Failed to analyze assignment: ' + error.message });
+  }
+});
+
+// GET /api/assignments/candidate/:id/analysis - Get stored AI analysis
+router.get('/candidate/:id/analysis', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const assignment = await CandidateAssignment.findById(id)
+      .select('ai_analysis ai_analyzed_at submission status')
+      .lean();
+
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+
+    if (!assignment.ai_analysis) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No AI analysis available. Click "Analyze" to generate one.'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: assignment.ai_analysis,
+      analyzedAt: assignment.ai_analyzed_at
+    });
+  } catch (error) {
+    console.error('Error fetching assignment analysis:', error);
+    res.status(500).json({ error: 'Failed to fetch analysis' });
+  }
+});
+
 module.exports = router;

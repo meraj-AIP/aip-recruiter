@@ -643,6 +643,22 @@ export const assignmentsAPI = {
     const response = await fetchAPI(`/assignments/by-application/${applicationId}`);
     return response.data || [];
   },
+
+  // ========== AI ANALYSIS ==========
+
+  // Trigger AI analysis for a candidate assignment
+  analyzeSubmission: async (candidateAssignmentId) => {
+    const response = await fetchAPI(`/assignments/candidate/${candidateAssignmentId}/analyze`, {
+      method: 'POST',
+    });
+    return response;
+  },
+
+  // Get AI analysis results for a candidate assignment
+  getAnalysis: async (candidateAssignmentId) => {
+    const response = await fetchAPI(`/assignments/candidate/${candidateAssignmentId}/analysis`);
+    return response;
+  },
 };
 
 // Interviews API
