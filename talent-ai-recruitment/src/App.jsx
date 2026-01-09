@@ -4864,10 +4864,15 @@ export default function App() {
     }
   }, [openings, showApplicationSuccess]);
 
-  // Handle /job/ routes for job detail view
+  // Handle /job/ routes for job detail view (admin view only, NOT /careers/job/)
   useEffect(() => {
     const path = window.location.pathname;
-    const jobDetailMatch = path.match(/\/job\/(.+)/);
+
+    // Skip if this is a careers portal route - those are handled by publicJobDetails view
+    if (path.startsWith('/careers/job/')) return;
+
+    // Only match /job/:id routes (not /careers/job/:id or /apply/:id)
+    const jobDetailMatch = path.match(/^\/job\/(.+)/);
 
     if (!jobDetailMatch) return;
 
