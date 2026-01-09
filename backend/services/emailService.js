@@ -853,6 +853,10 @@ async function sendRejection(candidate, job, reason = null) {
 async function sendOfferLetter(candidate, offer) {
   const subject = `Congratulations! Job Offer - ${offer.jobTitle} at AI Planet`;
 
+  // Frontend URL for candidate portal
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const portalUrl = `${frontendUrl}/careers/track`;
+
   const html = `
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
       <!-- Simple Header -->
@@ -909,14 +913,29 @@ async function sendOfferLetter(candidate, offer) {
           </table>
         </div>
 
+        <!-- Response Section - Portal Link -->
+        <div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border: 2px solid #10b981; border-radius: 12px; padding: 28px; margin-bottom: 24px; text-align: center;">
+          <div style="font-size: 40px; margin-bottom: 12px;">🎯</div>
+          <p style="margin: 0 0 12px; font-size: 18px; color: #065f46; font-weight: 700;">Ready to Respond?</p>
+          <p style="margin: 0 0 20px; font-size: 14px; color: #047857; line-height: 1.6;">
+            Visit our Candidate Portal to review your complete offer<br/>and submit your response.
+          </p>
+          <a href="${portalUrl}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; border-radius: 10px; font-size: 16px; font-weight: 700; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);">
+            Accept or Decline Offer
+          </a>
+          <p style="margin: 16px 0 0; font-size: 12px; color: #64748b;">
+            Use your registered email (${candidate.email}) to log in
+          </p>
+        </div>
+
         <!-- Next Steps -->
         <div style="margin-bottom: 24px;">
-          <h3 style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 12px;">Next Steps</h3>
+          <h3 style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 12px;">How to Respond</h3>
           <ol style="margin: 0; padding-left: 20px; color: #475569; font-size: 14px; line-height: 1.8;">
-            <li>Review the offer details carefully</li>
-            <li>If you have any questions, feel free to reach out</li>
-            <li>Confirm your acceptance by replying to this email</li>
-            <li>Complete onboarding documentation after acceptance</li>
+            <li>Click the button above to go to the Candidate Portal</li>
+            <li>Enter your email and phone verification</li>
+            <li>Review your complete offer details</li>
+            <li>Click Accept (with joining date & location) or Decline</li>
           </ol>
         </div>
 
@@ -1342,6 +1361,23 @@ async function sendAssignmentEmail(params) {
           </p>
         </div>
 
+        <!-- Submit Assignment Section -->
+        <div style="background: #ecfdf5; border: 2px solid #10b981; border-radius: 12px; padding: 24px; margin-bottom: 24px; text-align: center;">
+          <h3 style="font-size: 16px; font-weight: 700; color: #065f46; margin: 0 0 12px;">Ready to Submit?</h3>
+          <p style="font-size: 14px; color: #047857; margin: 0 0 16px; line-height: 1.6;">
+            Once you complete your assignment, submit it through our Candidate Portal.
+          </p>
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/portal"
+             style="display: inline-block; background: #10b981; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
+            Submit Your Assignment
+          </a>
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #a7f3d0;">
+            <p style="font-size: 13px; color: #065f46; margin: 0; line-height: 1.6;">
+              <strong>How to access:</strong> Use your email address and the last 5 digits of your registered phone number to log in.
+            </p>
+          </div>
+        </div>
+
         <p style="font-size: 14px; color: #475569; line-height: 1.7; margin-bottom: 24px;">
           If you have any questions, feel free to reply to this email.
         </p>
@@ -1382,9 +1418,9 @@ async function sendOfferEmail(params) {
     termsAndConditions
   } = params;
 
-  // Base URL for offer response page
-  const baseUrl = process.env.BACKEND_URL || 'http://localhost:5001';
-  const responseUrl = offerId ? `${baseUrl}/api/offers/respond/${offerId}` : null;
+  // Frontend URL for candidate portal where they can respond to the offer
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const portalUrl = `${frontendUrl}/careers/track`;
 
   // Format dates for display
   const displayStartDate = startDate ? new Date(startDate).toLocaleDateString('en-US', {
@@ -1533,26 +1569,42 @@ async function sendOfferEmail(params) {
         </div>
         ` : ''}
 
-        ${responseUrl ? `
-        <!-- Response Buttons -->
-        <div style="background: #f0fdf4; border: 2px solid #10b981; border-radius: 12px; padding: 24px; margin-bottom: 24px; text-align: center;">
-          <p style="margin: 0 0 16px; font-size: 15px; color: #065f46; font-weight: 600;">Ready to respond?</p>
-          <p style="margin: 0 0 20px; font-size: 14px; color: #047857;">Click the button below to accept or decline this offer</p>
-          <a href="${responseUrl}" style="display: inline-block; padding: 14px 32px; background: #10b981; color: white; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600;">
-            Respond to Offer
+        <!-- Response Section - Portal Link -->
+        <div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border: 2px solid #10b981; border-radius: 12px; padding: 28px; margin-bottom: 24px; text-align: center;">
+          <div style="font-size: 40px; margin-bottom: 12px;">🎯</div>
+          <p style="margin: 0 0 12px; font-size: 18px; color: #065f46; font-weight: 700;">Ready to Respond?</p>
+          <p style="margin: 0 0 20px; font-size: 14px; color: #047857; line-height: 1.6;">
+            Visit our Candidate Portal to review your complete offer details<br/>and submit your response.
+          </p>
+          <a href="${portalUrl}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; border-radius: 10px; font-size: 16px; font-weight: 700; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);">
+            Go to Candidate Portal
           </a>
+          <p style="margin: 16px 0 0; font-size: 12px; color: #64748b;">
+            Use your registered email (${candidateEmail}) to log in
+          </p>
         </div>
-        ` : ''}
+
+        <!-- How to Respond -->
+        <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+          <h3 style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 16px;">How to Accept or Decline</h3>
+          <ol style="margin: 0; padding-left: 20px; color: #475569; font-size: 14px; line-height: 2;">
+            <li>Click the <strong>"Go to Candidate Portal"</strong> button above</li>
+            <li>Enter your email and the last 5 digits of your phone number</li>
+            <li>Review your complete offer details including compensation</li>
+            <li>Click <strong>"Accept Offer"</strong> or <strong>"Decline Offer"</strong></li>
+            <li>If accepting, provide your preferred joining date and location</li>
+          </ol>
+        </div>
 
         <!-- Next Steps -->
         <div style="margin-bottom: 24px;">
-          <h3 style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 12px;">Next Steps</h3>
-          <ol style="margin: 0; padding-left: 20px; color: #475569; font-size: 14px; line-height: 1.8;">
-            <li>Review the offer details carefully</li>
-            <li>If you have any questions, feel free to reach out</li>
-            <li>Click the button above to accept or decline</li>
-            <li>Complete onboarding documentation after acceptance</li>
-          </ol>
+          <h3 style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 12px;">What Happens Next?</h3>
+          <ul style="margin: 0; padding-left: 20px; color: #475569; font-size: 14px; line-height: 1.8;">
+            <li>Review the offer details carefully on the portal</li>
+            <li>If you have any questions, feel free to reach out to us</li>
+            <li>Once you accept, our HR team will contact you within 24-48 hours</li>
+            <li>You'll receive onboarding documentation before your start date</li>
+          </ul>
         </div>
 
         <p style="font-size: 14px; color: #475569; line-height: 1.7; margin-bottom: 24px;">
@@ -1895,6 +1947,116 @@ async function sendHireConfirmationEmail(params) {
   }
 }
 
+/**
+ * Send notification to recruiter when candidate submits assignment
+ * @param {Object} params - Submission parameters
+ */
+async function sendAssignmentSubmissionNotification(params) {
+  const {
+    recruiterEmail,
+    candidateName,
+    candidateEmail,
+    jobTitle,
+    assignmentName,
+    submissionLink,
+    filesCount,
+    submissionNotes,
+    applicationId
+  } = params;
+
+  const subject = `📝 Assignment Submitted: ${candidateName} - ${jobTitle}`;
+  const portalUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  const html = `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+      <!-- Header -->
+      <div style="padding: 32px; border-bottom: 1px solid #e2e8f0;">
+        <div style="margin-bottom: 16px;">
+          <span style="font-size: 24px; font-weight: 700; color: #1e293b;">AI</span>
+          <span style="font-size: 24px; font-weight: 700; color: #10b981;">Planet</span>
+        </div>
+        <h1 style="font-size: 20px; font-weight: 600; color: #1e293b; margin: 0;">Assignment Submitted</h1>
+      </div>
+
+      <!-- Body -->
+      <div style="padding: 32px;">
+        <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 12px; padding: 20px; margin-bottom: 24px; text-align: center; border: 2px solid #86efac;">
+          <div style="font-size: 40px; margin-bottom: 8px;">✅</div>
+          <div style="font-size: 18px; font-weight: 700; color: #166534;">Assignment Received!</div>
+        </div>
+
+        <p style="font-size: 14px; color: #475569; line-height: 1.7; margin-bottom: 24px;">
+          <strong>${candidateName}</strong> has submitted their assignment for the <strong>${jobTitle}</strong> position.
+        </p>
+
+        <!-- Submission Details -->
+        <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+          <h3 style="font-size: 13px; font-weight: 600; color: #64748b; margin: 0 0 16px; text-transform: uppercase;">Submission Details</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px; width: 120px;">Candidate:</td>
+              <td style="padding: 8px 0; color: #1e293b; font-size: 14px; font-weight: 600;">${candidateName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Email:</td>
+              <td style="padding: 8px 0; color: #1e293b; font-size: 14px;">${candidateEmail}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Assignment:</td>
+              <td style="padding: 8px 0; color: #1e293b; font-size: 14px;">${assignmentName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Position:</td>
+              <td style="padding: 8px 0; color: #1e293b; font-size: 14px;">${jobTitle}</td>
+            </tr>
+            ${submissionLink ? `
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Link:</td>
+              <td style="padding: 8px 0;"><a href="${submissionLink}" style="color: #3b82f6; text-decoration: none; font-size: 14px;">${submissionLink}</a></td>
+            </tr>
+            ` : ''}
+            ${filesCount > 0 ? `
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Files:</td>
+              <td style="padding: 8px 0; color: #1e293b; font-size: 14px;">${filesCount} file(s) uploaded</td>
+            </tr>
+            ` : ''}
+          </table>
+        </div>
+
+        ${submissionNotes ? `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+          <div style="font-size: 12px; color: #92400e; font-weight: 600; margin-bottom: 8px;">CANDIDATE NOTES</div>
+          <div style="font-size: 14px; color: #78350f; line-height: 1.6;">${submissionNotes}</div>
+        </div>
+        ` : ''}
+
+        <!-- Action Button -->
+        <div style="text-align: center; margin-bottom: 24px;">
+          <a href="${portalUrl}/applications/candidate/${applicationId}" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 15px; font-weight: 600;">
+            Review Submission
+          </a>
+        </div>
+
+        <p style="font-size: 13px; color: #64748b; text-align: center;">
+          Please review the submission and update the application status accordingly.
+        </p>
+      </div>
+
+      ${generateEmailFooter({ showTrackingLink: false })}
+    </div>
+  `;
+
+  try {
+    await sendEmail(recruiterEmail, subject, html);
+    console.log('📝 Assignment submission notification sent to:', recruiterEmail);
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending assignment submission notification:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   sendApplicationReceived,
   sendInterviewInvitation,
@@ -1911,5 +2073,6 @@ module.exports = {
   sendEmail,
   testEmailConfiguration,
   getEmailStatus,
-  sendHireConfirmationEmail
+  sendHireConfirmationEmail,
+  sendAssignmentSubmissionNotification
 };

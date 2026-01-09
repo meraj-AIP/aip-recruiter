@@ -28,7 +28,7 @@ Thumbs.db
 *~
 
 # Build outputs
-dist/
+# dist/ - keeping dist for deployment
 build/
 
 # Test coverage

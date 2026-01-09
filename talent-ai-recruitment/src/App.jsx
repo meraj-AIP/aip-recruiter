@@ -6,8 +6,8 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import { jobsAPI, applicationsAPI, transformJobToFrontend, transformCandidateToFrontend, statsAPI, aiAPI, lookupsAPI, uploadAPI, departmentsAPI, roleTypesAPI, workSetupsAPI, usersAPI, tasksAPI, assignmentsAPI, interviewsAPI, emailAPI, rolesAPI } from './services/api';
 
-// API Base URL for direct fetch calls
-const API_BASE = 'http://localhost:5001/api';
+// API Base URL for direct fetch calls (uses environment variable in production)
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001/api';
 
 // ============================================
 // AI Planet - AI-Powered Recruitment Platform
@@ -488,6 +488,78 @@ const JourneyTab = ({ applicationId, candidateName }) => {
           </div>
         ))}
       </div>
+    </div>
+  );
+};
+
+// Compact Sidebar Timeline Component - For sidebar views
+const SidebarTimeline = ({ applicationId, API_BASE }) => {
+  const [journey, setJourney] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchJourney = async () => {
+      if (!applicationId) return;
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/applications/${applicationId}/journey`);
+        const data = await res.json();
+        if (data.success) setJourney(data.data);
+      } catch (err) {
+        console.error('Failed to fetch journey:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJourney();
+  }, [applicationId, API_BASE]);
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 20, color: '#94a3b8', fontSize: 13 }}>
+        Loading timeline...
+      </div>
+    );
+  }
+
+  if (!journey || !journey.journey || journey.journey.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: 20, color: '#94a3b8', fontSize: 13 }}>
+        No timeline data yet
+      </div>
+    );
+  }
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  return (
+    <div>
+      {journey.journey.slice(-8).map((event, i) => (
+        <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              background: event.color || '#10b981',
+              fontSize: 8,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }} />
+            {i < journey.journey.slice(-8).length - 1 && (
+              <div style={{ width: 2, height: 28, background: '#e2e8f0' }} />
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 500, color: '#1e293b', fontSize: 13 }}>{event.title}</div>
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDate(event.timestamp)}</div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 };
@@ -1608,8 +1680,91 @@ const CandidatePortalView = ({ API_BASE }) => {
   const [withdrawReason, setWithdrawReason] = useState('');
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
+  const [showAcceptOfferModal, setShowAcceptOfferModal] = useState(false);
+  const [showDeclineOfferModal, setShowDeclineOfferModal] = useState(false);
+  const [acceptOfferData, setAcceptOfferData] = useState({ joiningDate: '', joiningLocation: '', message: '' });
+  const [declineOfferReason, setDeclineOfferReason] = useState('');
+  const [offerResponseLoading, setOfferResponseLoading] = useState(false);
   const [openJobs, setOpenJobs] = useState([]);
   const [toast, setToast] = useState('');
+  // Assignment state
+  const [assignments, setAssignments] = useState([]);
+  const [selectedAssignment, setSelectedAssignment] = useState(null);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [submissionLinks, setSubmissionLinks] = useState(['']); // Array for multiple links
+  const [submissionNotes, setSubmissionNotes] = useState('');
+  const [submissionFiles, setSubmissionFiles] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  // Landing page state
+  const [publicJobs, setPublicJobs] = useState([]);
+  const [loadingJobs, setLoadingJobs] = useState(true);
+  const [jobSearch, setJobSearch] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState('All');
+  const [selectedLocation, setSelectedLocation] = useState('All');
+  // Mobile menu state
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Responsive state - track window width
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  // Selected job for detail view
+  const [selectedJobId, setSelectedJobId] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Determine portal page from URL
+  const getPortalPage = () => {
+    const path = location.pathname;
+    if (path.startsWith('/careers/job/')) {
+      const jobId = path.split('/careers/job/')[1]?.split('/')[0];
+      return { page: 'job-detail', jobId };
+    }
+    if (path === '/careers/track' || path === '/careers/track/') return { page: 'track' };
+    if (path.startsWith('/careers/status')) return { page: 'status' };
+    if (path === '/careers/jobs' || path === '/careers/jobs/') return { page: 'jobs' };
+    return { page: 'home' }; // Default careers landing page
+  };
+
+  const portalPage = getPortalPage();
+
+  // Track window resize for responsive design
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 640;
+  const isTablet = windowWidth >= 640 && windowWidth < 1024;
+  const isDesktop = windowWidth >= 1024;
+
+  // Fetch public jobs on mount
+  useEffect(() => {
+    const fetchPublicJobs = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/jobs/public`);
+        const data = await res.json();
+        if (data.success) setPublicJobs(data.data || []);
+      } catch (err) {
+        console.error('Error fetching public jobs:', err);
+      } finally {
+        setLoadingJobs(false);
+      }
+    };
+    fetchPublicJobs();
+  }, [API_BASE]);
+
+  // Filter jobs
+  const filteredJobs = publicJobs.filter(job => {
+    const matchesSearch = !jobSearch ||
+      job.title?.toLowerCase().includes(jobSearch.toLowerCase()) ||
+      job.department?.toLowerCase().includes(jobSearch.toLowerCase());
+    const matchesDept = selectedDepartment === 'All' || job.department === selectedDepartment;
+    const matchesLoc = selectedLocation === 'All' || job.location === selectedLocation;
+    return matchesSearch && matchesDept && matchesLoc;
+  });
+
+  // Get unique departments and locations
+  const departments = ['All', ...new Set(publicJobs.map(j => j.department).filter(Boolean))];
+  const locations = ['All', ...new Set(publicJobs.map(j => j.location).filter(Boolean))];
 
   const showToast = (msg) => {
     setToast(msg);
@@ -1620,7 +1775,7 @@ const CandidatePortalView = ({ API_BASE }) => {
     const colors = {
       'shortlisting': '#0ea5e9', 'screening': '#8b5cf6', 'assessment': '#8b5cf6',
       'assignment-sent': '#f59e0b', 'assignment-submitted': '#8b5cf6', 'interview': '#f59e0b',
-      'offer-pending': '#10b981', 'offer-accepted': '#10b981', 'hired': '#10b981',
+      'offer-sent': '#10b981', 'offer-pending': '#10b981', 'offer-accepted': '#10b981', 'hired': '#10b981',
       'rejected': '#94a3b8', 'withdrawn': '#94a3b8'
     };
     return colors[stage] || '#64748b';
@@ -1654,6 +1809,7 @@ const CandidatePortalView = ({ API_BASE }) => {
           fetchAppDetails(data.data.applications[0].id, data.data.token);
         }
         fetchOpenJobs();
+        fetchAssignments();
       } else {
         setError(data.error || 'No applications found for this email');
       }
@@ -1681,6 +1837,59 @@ const CandidatePortalView = ({ API_BASE }) => {
       if (data.success) setOpenJobs(data.data || []);
     } catch (err) {
       console.error('Error fetching jobs:', err);
+    }
+  };
+
+  const fetchAssignments = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/portal/assignments?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data.success) setAssignments(data.data || []);
+    } catch (err) {
+      console.error('Error fetching assignments:', err);
+    }
+  };
+
+  const handleSubmitAssignment = async () => {
+    if (!selectedAssignment) return;
+    const validLinks = submissionLinks.filter(l => l && l.trim());
+    if (validLinks.length === 0 && submissionFiles.length === 0) {
+      showToast('Please provide a link or upload files');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append('email', email);
+      if (validLinks.length > 0) {
+        formData.append('submissionLinks', JSON.stringify(validLinks));
+      }
+      if (submissionNotes) formData.append('notes', submissionNotes);
+      submissionFiles.forEach(file => formData.append('files', file));
+
+      const res = await fetch(`${API_BASE}/portal/assignment/${selectedAssignment.id}/submit`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        showToast('Assignment submitted successfully!');
+        setShowSubmitModal(false);
+        setSubmissionLinks(['']);
+        setSubmissionNotes('');
+        setSubmissionFiles([]);
+        setSelectedAssignment(null);
+        fetchAssignments();
+        handleLookup({ preventDefault: () => {} }); // Refresh application status
+      } else {
+        showToast(data.error || 'Failed to submit assignment');
+      }
+    } catch (err) {
+      showToast('Failed to submit assignment');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1725,19 +1934,85 @@ const CandidatePortalView = ({ API_BASE }) => {
     }
   };
 
-  const handleOfferResponse = async (response) => {
-    if (!window.confirm(`Are you sure you want to ${response} this offer?`)) return;
+  const handleOfferResponse = (response) => {
+    if (response === 'accept') {
+      setShowAcceptOfferModal(true);
+    } else {
+      setShowDeclineOfferModal(true);
+    }
+  };
+
+  const submitOfferAcceptance = async () => {
+    if (!acceptOfferData.joiningDate) {
+      showToast('Please select your preferred joining date');
+      return;
+    }
+    if (!acceptOfferData.joiningLocation) {
+      showToast('Please enter your preferred joining location');
+      return;
+    }
+
+    setOfferResponseLoading(true);
     try {
       const res = await fetch(`${API_BASE}/portal/application/${selectedApp.id}/respond-offer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, token: candidateData.token, response })
+        body: JSON.stringify({
+          email,
+          token: candidateData.token,
+          response: 'accept',
+          joiningDate: acceptOfferData.joiningDate,
+          joiningLocation: acceptOfferData.joiningLocation,
+          message: acceptOfferData.message
+        })
       });
       const data = await res.json();
-      showToast(data.message || (response === 'accept' ? 'Offer accepted!' : 'Offer declined'));
-      handleLookup({ preventDefault: () => {} });
+      if (data.success) {
+        showToast('🎉 Congratulations! Offer accepted successfully!');
+        setShowAcceptOfferModal(false);
+        setAcceptOfferData({ joiningDate: '', joiningLocation: '', message: '' });
+        handleLookup({ preventDefault: () => {} });
+      } else {
+        showToast(data.error || 'Failed to accept offer');
+      }
     } catch (err) {
-      showToast('Failed to respond to offer');
+      showToast('Failed to accept offer');
+    } finally {
+      setOfferResponseLoading(false);
+    }
+  };
+
+  const submitOfferDecline = async () => {
+    if (!declineOfferReason.trim()) {
+      showToast('Please provide a reason for declining');
+      return;
+    }
+
+    setOfferResponseLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/portal/application/${selectedApp.id}/respond-offer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          token: candidateData.token,
+          response: 'decline',
+          reason: declineOfferReason
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Offer declined. We wish you all the best!');
+        setShowDeclineOfferModal(false);
+        setDeclineOfferReason('');
+        handleLookup({ preventDefault: () => {} });
+      } else {
+        showToast(data.error || 'Failed to decline offer');
+      }
+    } catch (err) {
+      showToast('Failed to decline offer');
+    } finally {
+      setOfferResponseLoading(false);
     }
   };
 
@@ -1754,120 +2029,1040 @@ const CandidatePortalView = ({ API_BASE }) => {
   // Progress steps for timeline
   const progressSteps = ['Application', 'Review', 'Assessment', 'Interview', 'Offer', 'Hired'];
   const getStepIndex = (stage) => {
-    const map = { 'shortlisting': 1, 'screening': 1, 'assessment': 2, 'assignment-sent': 2, 'assignment-submitted': 2, 'interview': 3, 'offer-pending': 4, 'offer-accepted': 4, 'hired': 5 };
+    const map = { 'shortlisting': 1, 'screening': 1, 'assessment': 2, 'assignment-sent': 2, 'assignment-submitted': 2, 'interview': 3, 'offer-sent': 4, 'offer-pending': 4, 'offer-accepted': 4, 'hired': 5 };
     return map[stage] || 0;
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)', padding: '40px 20px' }}>
-      {toast && <div style={{ position: 'fixed', top: 20, right: 20, background: '#10b981', color: 'white', padding: '16px 24px', borderRadius: 12, zIndex: 9999, boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>{toast}</div>}
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)' }}>
+      {toast && <div style={{ position: 'fixed', top: 20, right: 20, left: isMobile ? 20 : 'auto', background: '#10b981', color: 'white', padding: isMobile ? '12px 16px' : '16px 24px', borderRadius: 12, zIndex: 9999, boxShadow: '0 10px 40px rgba(0,0,0,0.3)', fontSize: isMobile ? 14 : 15 }}>{toast}</div>}
 
-      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-        {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
-          <img src="https://cdn.brandfetch.io/idZWCLNWW6/w/48/h/48/theme/dark/logo.png?c=1bxid64Mup7aczewSAYMX&t=1764560488706" alt="AI Planet" style={{ width: 80, height: 80, borderRadius: 20, marginBottom: 20, boxShadow: '0 8px 30px rgba(68, 146, 76, 0.4)' }} />
-          <h1 style={{ color: 'white', fontSize: 32, fontWeight: 700, margin: '0 0 12px' }}>Application Status Portal</h1>
-          <p style={{ color: '#94a3b8', fontSize: 16, margin: 0 }}>Track your application progress at AI Planet</p>
-        </div>
+      {/* ============================================
+          PORTAL LANDING PAGE (Not Logged In)
+          ============================================ */}
+      {!candidateData && (
+        <div style={{ minHeight: '100vh', background: '#ffffff' }}>
+          {/* Mobile Menu Overlay */}
+          {mobileMenuOpen && (
+            <div
+              className="mobile-menu-overlay open"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+          )}
 
-        {/* Search Form */}
-        {!candidateData && (
-          <div style={{ background: 'white', borderRadius: 20, padding: 32, marginBottom: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <form onSubmit={handleLookup}>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b' }}>Email Address</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your.email@example.com" style={{ width: '100%', padding: '16px 20px', border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 16, outline: 'none', boxSizing: 'border-box' }} />
+          {/* Mobile Menu Drawer */}
+          <div className={`mobile-menu-drawer ${mobileMenuOpen ? 'open' : ''}`}>
+            <div className="mobile-menu-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <img src="https://cdn.brandfetch.io/idZWCLNWW6/w/48/h/48/theme/dark/logo.png?c=1bxid64Mup7aczewSAYMX&t=1764560488706" alt="AI Planet" style={{ width: 36, height: 36, borderRadius: 8 }} />
+                <span style={{ fontSize: 16, fontWeight: 700, color: '#1e293b' }}>Menu</span>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b' }}>Last 5 Digits of Registered Phone Number</label>
-                <input type="text" value={phoneLast5} onChange={e => setPhoneLast5(e.target.value.replace(/\D/g, '').slice(0, 5))} placeholder="e.g., 55219" maxLength={5} style={{ width: '200px', padding: '16px 20px', border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 16, outline: 'none', letterSpacing: '4px', textAlign: 'center', fontWeight: 600 }} />
-                <p style={{ margin: '8px 0 0', fontSize: 13, color: '#64748b' }}>Enter the last 5 digits of the phone number you used while applying</p>
-              </div>
-              <button type="submit" disabled={loading} style={{ padding: '16px 32px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1, width: '100%' }}>
-                {loading ? 'Verifying...' : 'Check Status'}
-              </button>
-            </form>
-            {error && <div style={{ marginTop: 20, padding: '16px 20px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, color: '#dc2626', fontSize: 14 }}>{error}</div>}
-          </div>
-        )}
-
-        {/* Main Content */}
-        {candidateData && (
-          <>
-            {/* Welcome Bar */}
-            <div style={{ background: 'white', borderRadius: 16, padding: '20px 28px', marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#1e293b' }}>Welcome, {candidateData.candidateName}</h2>
-                <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 14 }}>{candidateData.email}</p>
-              </div>
-              <button onClick={() => { setCandidateData(null); setSelectedApp(null); setEmail(''); setPhoneLast5(''); }} style={{ padding: '10px 20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 500 }}>Sign Out</button>
+              <button className="mobile-menu-close" onClick={() => setMobileMenuOpen(false)}>×</button>
             </div>
+            <div className="mobile-menu-links">
+              <a href="/careers" className="mobile-menu-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); navigate('/careers'); }}>
+                <span style={{ marginRight: 12 }}>🏠</span> Home
+              </a>
+              <a href="/careers/jobs" className="mobile-menu-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); navigate('/careers/jobs'); }}>
+                <span style={{ marginRight: 12 }}>&#128188;</span> Open Positions
+              </a>
+              <a href="/careers/track" className="mobile-menu-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); navigate('/careers/track'); }}>
+                <span style={{ marginRight: 12 }}>&#128269;</span> Track Application
+              </a>
+            </div>
+            <div style={{ padding: 20, borderTop: '1px solid #e2e8f0' }}>
+              <a href="mailto:careers@aiplanet.com" style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#10b981', textDecoration: 'none', fontWeight: 500, fontSize: 14 }}>
+                <span>&#9993;</span> careers@aiplanet.com
+              </a>
+            </div>
+          </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 24 }}>
-              {/* Sidebar - Applications List */}
-              <div style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
-                <div style={{ padding: '16px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#64748b' }}>MY APPLICATIONS</h3>
-                </div>
-                {candidateData.applications?.map(app => (
-                  <div key={app.id} onClick={() => { setSelectedApp(app); fetchAppDetails(app.id, candidateData.token); }} style={{ padding: '16px 20px', cursor: 'pointer', background: selectedApp?.id === app.id ? '#f0fdf4' : 'white', borderLeft: selectedApp?.id === app.id ? '3px solid #10b981' : '3px solid transparent', borderBottom: '1px solid #f1f5f9' }}>
-                    <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 14, marginBottom: 4 }}>{app.jobTitle}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: getStageColor(app.stageKey) }}></span>
-                      <span style={{ fontSize: 12, color: '#64748b' }}>{app.stage}</span>
-                    </div>
-                  </div>
-                ))}
+          {/* Navigation Bar - Responsive */}
+          <nav style={{
+            background: 'white',
+            borderBottom: '1px solid #e2e8f0',
+            padding: isMobile ? '12px 0' : '16px 0',
+            position: 'sticky',
+            top: 0,
+            zIndex: 100
+          }}>
+            <div style={{
+              maxWidth: 1200,
+              margin: '0 auto',
+              padding: isMobile ? '0 16px' : isTablet ? '0 24px' : '0 32px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 12, cursor: 'pointer' }}
+                onClick={() => navigate('/careers')}
+              >
+                <img src="https://cdn.brandfetch.io/idZWCLNWW6/w/48/h/48/theme/dark/logo.png?c=1bxid64Mup7aczewSAYMX&t=1764560488706" alt="AI Planet" style={{ width: isMobile ? 36 : 40, height: isMobile ? 36 : 40, borderRadius: 10 }} />
+                <span style={{ fontSize: isMobile ? 16 : 18, fontWeight: 700, color: '#1e293b' }}>{isMobile ? 'AI Planet' : 'AI Planet Careers'}</span>
               </div>
 
-              {/* Main Panel */}
-              <div style={{ background: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
-                {selectedApp && (
-                  <>
-                    {/* Tab Navigation */}
-                    <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
-                      {[{ k: 'status', l: 'Status' }, { k: 'timeline', l: 'Timeline' }, { k: 'interviews', l: 'Interviews' }, { k: 'jobs', l: 'Other Jobs' }].map(tab => (
-                        <button key={tab.k} onClick={() => setActiveTab(tab.k)} style={{ flex: 1, padding: '16px', background: activeTab === tab.k ? 'white' : '#f8fafc', border: 'none', borderBottom: activeTab === tab.k ? '2px solid #10b981' : '2px solid transparent', cursor: 'pointer', fontWeight: 600, color: activeTab === tab.k ? '#10b981' : '#64748b', fontSize: 14 }}>{tab.l}</button>
+              {/* Desktop Navigation */}
+              <div className="desktop-nav">
+                <a
+                  href="/careers/jobs"
+                  onClick={(e) => { e.preventDefault(); navigate('/careers/jobs'); }}
+                  style={{ color: portalPage.page === 'jobs' ? '#10b981' : '#64748b', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}
+                >
+                  Open Positions
+                </a>
+                <a
+                  href="/careers/track"
+                  onClick={(e) => { e.preventDefault(); navigate('/careers/track'); }}
+                  style={{ color: portalPage.page === 'track' ? '#10b981' : '#64748b', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}
+                >
+                  Track Application
+                </a>
+              </div>
+
+              {/* Mobile Menu Button */}
+              <button
+                className="mobile-menu-btn"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open menu"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="3" y1="6" x2="21" y2="6"></line>
+                  <line x1="3" y1="12" x2="21" y2="12"></line>
+                  <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </nav>
+
+          {/* Hero Section - Only show on home page */}
+          {portalPage.page === 'home' && (
+          <div className="portal-hero" style={{
+            background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+            padding: isMobile ? '48px 16px' : isTablet ? '60px 24px' : '80px 32px',
+            textAlign: 'center',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div style={{ position: 'absolute', top: isMobile ? -50 : -100, right: isMobile ? -50 : -100, width: isMobile ? 200 : 400, height: isMobile ? 200 : 400, background: 'radial-gradient(circle, rgba(16, 185, 129, 0.2) 0%, transparent 60%)', borderRadius: '50%' }} />
+            <div style={{ position: 'absolute', bottom: isMobile ? -50 : -100, left: isMobile ? -50 : -100, width: isMobile ? 150 : 300, height: isMobile ? 150 : 300, background: 'radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 60%)', borderRadius: '50%' }} />
+
+            <div style={{ position: 'relative', zIndex: 1, maxWidth: 700, margin: '0 auto', padding: isMobile ? '0 8px' : 0 }}>
+              <h1 style={{
+                color: 'white',
+                fontSize: isMobile ? 28 : isTablet ? 36 : 48,
+                fontWeight: 800,
+                margin: '0 0 16px',
+                lineHeight: 1.2
+              }}>
+                Join Us in Shaping the Future of AI
+              </h1>
+              <p style={{
+                color: '#94a3b8',
+                fontSize: isMobile ? 15 : isTablet ? 16 : 18,
+                margin: isMobile ? '0 0 28px' : '0 0 40px',
+                lineHeight: 1.7
+              }}>
+                Be part of a global team building innovative AI solutions. We're looking for passionate minds ready to make an impact.
+              </p>
+              <div className="hero-buttons" style={{
+                display: 'flex',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: isMobile ? 12 : 16,
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}>
+                <a
+                  href="/careers/jobs"
+                  onClick={(e) => { e.preventDefault(); navigate('/careers/jobs'); }}
+                  className="hero-btn"
+                  style={{
+                    width: isMobile ? '100%' : 'auto',
+                    maxWidth: isMobile ? 280 : 'none',
+                    padding: isMobile ? '14px 24px' : '16px 32px',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    color: 'white',
+                    borderRadius: 12,
+                    textDecoration: 'none',
+                    fontSize: isMobile ? 15 : 16,
+                    fontWeight: 600,
+                    boxShadow: '0 8px 24px rgba(16, 185, 129, 0.3)',
+                    display: 'inline-block',
+                    boxSizing: 'border-box',
+                    textAlign: 'center'
+                  }}
+                >
+                  View Open Positions
+                </a>
+                <a
+                  href="/careers/track"
+                  onClick={(e) => { e.preventDefault(); navigate('/careers/track'); }}
+                  className="hero-btn"
+                  style={{
+                    width: isMobile ? '100%' : 'auto',
+                    maxWidth: isMobile ? 280 : 'none',
+                    padding: isMobile ? '14px 24px' : '16px 32px',
+                    background: 'rgba(255,255,255,0.1)',
+                    color: 'white',
+                    borderRadius: 12,
+                    textDecoration: 'none',
+                    fontSize: isMobile ? 15 : 16,
+                    fontWeight: 600,
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    display: 'inline-block',
+                    boxSizing: 'border-box',
+                    textAlign: 'center'
+                  }}
+                >
+                  Track Your Application
+                </a>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* Main Content - Responsive Grid */}
+          <div style={{
+            maxWidth: 1200,
+            margin: '0 auto',
+            padding: isMobile ? '32px 16px' : isTablet ? '40px 24px' : '60px 32px'
+          }}>
+            {/* Track Application Page - Full width dedicated page */}
+            {(portalPage.page === 'track' || portalPage.page === 'status') && (
+              <div style={{ maxWidth: 480, margin: '0 auto' }}>
+                <div style={{
+                  background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                  borderRadius: 20,
+                  padding: isMobile ? 24 : 40,
+                  color: 'white'
+                }}>
+                  <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 32 }}>
+                    <div style={{
+                      width: isMobile ? 60 : 72,
+                      height: isMobile ? 60 : 72,
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      borderRadius: 18,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 18px',
+                      fontSize: isMobile ? 28 : 32
+                    }}>
+                      &#128269;
+                    </div>
+                    <h2 style={{ margin: '0 0 10px', fontSize: isMobile ? 22 : 26, fontWeight: 700 }}>Track Your Application</h2>
+                    <p style={{ margin: 0, color: '#94a3b8', fontSize: isMobile ? 14 : 15, lineHeight: 1.6 }}>
+                      Enter your email and phone verification to check your application status.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleLookup}>
+                    <div style={{ marginBottom: 20 }}>
+                      <label style={{ display: 'block', marginBottom: 8, fontWeight: 500, fontSize: 14, color: '#94a3b8' }}>Email Address</label>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        placeholder="your.email@example.com"
+                        style={{
+                          width: '100%',
+                          padding: '16px 18px',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: 12,
+                          fontSize: 15,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          background: 'rgba(255,255,255,0.05)',
+                          color: 'white'
+                        }}
+                      />
+                    </div>
+                    <div style={{ marginBottom: 24 }}>
+                      <label style={{ display: 'block', marginBottom: 8, fontWeight: 500, fontSize: 14, color: '#94a3b8' }}>Last 5 Digits of Phone</label>
+                      <input
+                        type="text"
+                        value={phoneLast5}
+                        onChange={e => setPhoneLast5(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                        placeholder="55219"
+                        maxLength={5}
+                        style={{
+                          width: '160px',
+                          padding: '16px 18px',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: 12,
+                          fontSize: 20,
+                          outline: 'none',
+                          letterSpacing: '6px',
+                          textAlign: 'center',
+                          fontWeight: 600,
+                          background: 'rgba(255,255,255,0.05)',
+                          color: 'white'
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      style={{
+                        width: '100%',
+                        padding: '16px 24px',
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: 12,
+                        fontSize: 16,
+                        fontWeight: 600,
+                        cursor: loading ? 'wait' : 'pointer',
+                        opacity: loading ? 0.7 : 1,
+                        minHeight: 52
+                      }}
+                    >
+                      {loading ? 'Checking...' : 'Check Application Status'}
+                    </button>
+                  </form>
+                  {error && (
+                    <div style={{
+                      marginTop: 20,
+                      padding: '14px 16px',
+                      background: 'rgba(220, 38, 38, 0.15)',
+                      border: '1px solid rgba(220, 38, 38, 0.3)',
+                      borderRadius: 10,
+                      color: '#fca5a5',
+                      fontSize: 14
+                    }}>
+                      {error}
+                    </div>
+                  )}
+                </div>
+
+                {/* Browse Jobs Link */}
+                <div style={{ textAlign: 'center', marginTop: 24 }}>
+                  <p style={{ color: '#64748b', fontSize: 14, marginBottom: 12 }}>Looking for new opportunities?</p>
+                  <a
+                    href="/careers/jobs"
+                    onClick={(e) => { e.preventDefault(); navigate('/careers/jobs'); }}
+                    style={{
+                      color: '#10b981',
+                      textDecoration: 'none',
+                      fontWeight: 600,
+                      fontSize: 15,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8
+                    }}
+                  >
+                    Browse Open Positions <span>→</span>
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* Jobs Page Layout */}
+            {(portalPage.page === 'home' || portalPage.page === 'jobs') && (
+            <div className="portal-grid" style={{
+              display: 'grid',
+              gridTemplateColumns: (isDesktop && portalPage.page === 'home') ? '1fr 380px' : '1fr',
+              gap: isDesktop ? 48 : 32
+            }}>
+
+              {/* Track Application - Shown first on mobile (only on home page) */}
+              {!isDesktop && portalPage.page === 'home' && (
+                <div id="track-mobile">
+                  <div style={{
+                    background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                    borderRadius: 20,
+                    padding: isMobile ? 24 : 32,
+                    color: 'white'
+                  }}>
+                    <div style={{ textAlign: 'center', marginBottom: isMobile ? 20 : 28 }}>
+                      <div style={{
+                        width: isMobile ? 50 : 60,
+                        height: isMobile ? 50 : 60,
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        borderRadius: 16,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 14px',
+                        fontSize: isMobile ? 24 : 28
+                      }}>
+                        &#128269;
+                      </div>
+                      <h3 style={{ margin: '0 0 8px', fontSize: isMobile ? 18 : 20, fontWeight: 700 }}>Track Your Application</h3>
+                      <p style={{ margin: 0, color: '#94a3b8', fontSize: isMobile ? 13 : 14, lineHeight: 1.5 }}>
+                        Already applied? Check your status here.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleLookup}>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: '#94a3b8' }}>Email Address</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          placeholder="your.email@example.com"
+                          style={{
+                            width: '100%',
+                            padding: '14px 16px',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 10,
+                            fontSize: 14,
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'white'
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 20 }}>
+                        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: '#94a3b8' }}>Last 5 Digits of Phone</label>
+                        <input
+                          type="text"
+                          value={phoneLast5}
+                          onChange={e => setPhoneLast5(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                          placeholder="55219"
+                          maxLength={5}
+                          style={{
+                            width: '140px',
+                            padding: '14px 16px',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 10,
+                            fontSize: 18,
+                            outline: 'none',
+                            letterSpacing: '4px',
+                            textAlign: 'center',
+                            fontWeight: 600,
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'white'
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                          width: '100%',
+                          padding: '14px 24px',
+                          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: 10,
+                          fontSize: 15,
+                          fontWeight: 600,
+                          cursor: loading ? 'wait' : 'pointer',
+                          opacity: loading ? 0.7 : 1,
+                          minHeight: 48
+                        }}
+                      >
+                        {loading ? 'Checking...' : 'Check Status'}
+                      </button>
+                    </form>
+                    {error && (
+                      <div style={{
+                        marginTop: 16,
+                        padding: '12px 14px',
+                        background: 'rgba(220, 38, 38, 0.15)',
+                        border: '1px solid rgba(220, 38, 38, 0.3)',
+                        borderRadius: 8,
+                        color: '#fca5a5',
+                        fontSize: 13
+                      }}>
+                        {error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Left - Job Listings */}
+              <div id="openings">
+                <div style={{ marginBottom: isMobile ? 24 : 32 }}>
+                  {portalPage.page === 'jobs' && (
+                    <a
+                      href="/careers"
+                      onClick={(e) => { e.preventDefault(); navigate('/careers'); }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        color: '#64748b',
+                        textDecoration: 'none',
+                        fontSize: 14,
+                        marginBottom: 16,
+                        fontWeight: 500
+                      }}
+                    >
+                      <span>←</span> Back to Home
+                    </a>
+                  )}
+                  <h2 style={{ margin: '0 0 8px', fontSize: isMobile ? 22 : isTablet ? 26 : 28, fontWeight: 700, color: '#1e293b' }}>Open Positions</h2>
+                  <p style={{ margin: 0, color: '#64748b', fontSize: isMobile ? 14 : 15 }}>Find your next opportunity with us</p>
+                </div>
+
+                {/* Search & Filters - Responsive */}
+                <div className="filters-row" style={{
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: 12,
+                  marginBottom: 24
+                }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <input
+                      type="text"
+                      value={jobSearch}
+                      onChange={e => setJobSearch(e.target.value)}
+                      placeholder="Search positions..."
+                      className="filter-input"
+                      style={{
+                        width: '100%',
+                        padding: '14px 20px',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 10,
+                        fontSize: 15,
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        background: '#f8fafc'
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, flexDirection: isMobile ? 'column' : 'row' }}>
+                    <select
+                      value={selectedDepartment}
+                      onChange={e => setSelectedDepartment(e.target.value)}
+                      className="filter-select"
+                      style={{
+                        padding: '14px 16px',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 10,
+                        fontSize: 14,
+                        background: 'white',
+                        cursor: 'pointer',
+                        color: '#475569',
+                        minWidth: isMobile ? '100%' : 140,
+                        width: isMobile ? '100%' : 'auto'
+                      }}
+                    >
+                      {departments.map(d => <option key={d} value={d}>{d === 'All' ? 'All Teams' : d}</option>)}
+                    </select>
+                    <select
+                      value={selectedLocation}
+                      onChange={e => setSelectedLocation(e.target.value)}
+                      className="filter-select"
+                      style={{
+                        padding: '14px 16px',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 10,
+                        fontSize: 14,
+                        background: 'white',
+                        cursor: 'pointer',
+                        color: '#475569',
+                        minWidth: isMobile ? '100%' : 140,
+                        width: isMobile ? '100%' : 'auto'
+                      }}
+                    >
+                      {locations.map(l => <option key={l} value={l}>{l === 'All' ? 'All Locations' : l}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Results count */}
+                <div style={{ marginBottom: 20, fontSize: 14, color: '#64748b' }}>
+                  Showing <strong style={{ color: '#1e293b' }}>{filteredJobs.length}</strong> position{filteredJobs.length !== 1 ? 's' : ''}
+                </div>
+
+                {/* Job Cards - Responsive */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 12 : 16 }}>
+                  {loadingJobs ? (
+                    <div style={{ textAlign: 'center', padding: isMobile ? 48 : 80, color: '#94a3b8' }}>
+                      <div style={{ width: 48, height: 48, border: '3px solid #e2e8f0', borderTopColor: '#10b981', borderRadius: '50%', margin: '0 auto 20px', animation: 'spin 1s linear infinite' }} />
+                      <div style={{ fontSize: 15 }}>Loading positions...</div>
+                    </div>
+                  ) : filteredJobs.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: isMobile ? 48 : 80, background: '#f8fafc', borderRadius: 16, border: '2px dashed #e2e8f0' }}>
+                      <div style={{ fontSize: isMobile ? 48 : 56, marginBottom: 16 }}>&#128270;</div>
+                      <div style={{ fontWeight: 600, color: '#1e293b', fontSize: isMobile ? 16 : 18, marginBottom: 8 }}>No positions found</div>
+                      <div style={{ color: '#64748b', fontSize: isMobile ? 14 : 15 }}>Try adjusting your search or filters</div>
+                    </div>
+                  ) : (
+                    filteredJobs.map(job => (
+                      <div
+                        key={job.id}
+                        onClick={() => navigate(`/careers/job/${job.id}`)}
+                        className="job-card"
+                        style={{
+                          padding: isMobile ? 20 : 24,
+                          background: 'white',
+                          borderRadius: 16,
+                          border: '1px solid #e2e8f0',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                        }}
+                        onMouseEnter={e => {
+                          if (!isMobile) {
+                            e.currentTarget.style.borderColor = '#10b981';
+                            e.currentTarget.style.boxShadow = '0 8px 30px rgba(16, 185, 129, 0.12)';
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          if (!isMobile) {
+                            e.currentTarget.style.borderColor = '#e2e8f0';
+                            e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
+                            e.currentTarget.style.transform = 'translateY(0)';
+                          }
+                        }}
+                      >
+                        <div className="job-card-header" style={{
+                          display: 'flex',
+                          flexDirection: isMobile ? 'column' : 'row',
+                          justifyContent: isMobile ? 'flex-start' : 'space-between',
+                          alignItems: isMobile ? 'stretch' : 'flex-start',
+                          gap: isMobile ? 16 : 12
+                        }}>
+                          <div className="job-card-content" style={{ flex: 1 }}>
+                            <h3 style={{ margin: '0 0 10px', fontSize: isMobile ? 16 : 18, fontWeight: 700, color: '#1e293b' }}>{job.title}</h3>
+                            <div className="job-card-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? 8 : 12, alignItems: 'center' }}>
+                              {job.department && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#7c3aed', fontSize: isMobile ? 13 : 14, fontWeight: 500 }}>
+                                  <span style={{ fontSize: isMobile ? 14 : 16 }}>&#128188;</span> {job.department}
+                                </span>
+                              )}
+                              {job.location && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: isMobile ? 13 : 14 }}>
+                                  <span style={{ fontSize: isMobile ? 14 : 16 }}>&#128205;</span> {job.location}
+                                </span>
+                              )}
+                              {job.workSetup && (
+                                <span style={{ padding: isMobile ? '3px 10px' : '4px 12px', background: '#dbeafe', color: '#2563eb', borderRadius: 6, fontSize: isMobile ? 12 : 13, fontWeight: 500 }}>
+                                  {job.workSetup}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            className="job-card-btn"
+                            style={{
+                              width: isMobile ? '100%' : 'auto',
+                              padding: '12px 24px',
+                              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: 10,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              minHeight: 44
+                            }}
+                          >
+                            Apply Now
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Right - Track Application Sidebar (Desktop Only, Home Page Only) */}
+              {isDesktop && portalPage.page === 'home' && (
+                <div id="track" className="portal-sidebar" style={{ position: 'sticky', top: 100, alignSelf: 'flex-start' }}>
+                  <div style={{
+                    background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                    borderRadius: 20,
+                    padding: 32,
+                    color: 'white'
+                  }}>
+                    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                      <div style={{
+                        width: 60,
+                        height: 60,
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        borderRadius: 16,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 16px',
+                        fontSize: 28
+                      }}>
+                        &#128269;
+                      </div>
+                      <h3 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700 }}>Track Your Application</h3>
+                      <p style={{ margin: 0, color: '#94a3b8', fontSize: 14, lineHeight: 1.5 }}>
+                        Already applied? Check your status here.
+                      </p>
+                    </div>
+
+                    <form onSubmit={handleLookup}>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: '#94a3b8' }}>Email Address</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          placeholder="your.email@example.com"
+                          style={{
+                            width: '100%',
+                            padding: '14px 16px',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 10,
+                            fontSize: 14,
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'white'
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 20 }}>
+                        <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13, color: '#94a3b8' }}>Last 5 Digits of Phone</label>
+                        <input
+                          type="text"
+                          value={phoneLast5}
+                          onChange={e => setPhoneLast5(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                          placeholder="55219"
+                          maxLength={5}
+                          style={{
+                            width: '140px',
+                            padding: '14px 16px',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 10,
+                            fontSize: 18,
+                            outline: 'none',
+                            letterSpacing: '4px',
+                            textAlign: 'center',
+                            fontWeight: 600,
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'white'
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                          width: '100%',
+                          padding: '14px 24px',
+                          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: 10,
+                          fontSize: 15,
+                          fontWeight: 600,
+                          cursor: loading ? 'wait' : 'pointer',
+                          opacity: loading ? 0.7 : 1
+                        }}
+                      >
+                        {loading ? 'Checking...' : 'Check Status'}
+                      </button>
+                    </form>
+                    {error && (
+                      <div style={{
+                        marginTop: 16,
+                        padding: '12px 14px',
+                        background: 'rgba(220, 38, 38, 0.15)',
+                        border: '1px solid rgba(220, 38, 38, 0.3)',
+                        borderRadius: 8,
+                        color: '#fca5a5',
+                        fontSize: 13
+                      }}>
+                        {error}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Company Perks */}
+                  <div style={{ marginTop: 24, padding: 24, background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)', borderRadius: 16, border: '1px solid #bbf7d0' }}>
+                    <h4 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 700, color: '#166534' }}>Why Join AI Planet?</h4>
+                    <div className="perks-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      {[
+                        { label: 'Hybrid', desc: 'Flexible work setup' },
+                        { label: 'Flexible Hours', desc: 'Work-life balance' },
+                        { label: 'Growth', desc: 'Fast-paced environment' },
+                        { label: 'Impact', desc: 'Meaningful work' }
+                      ].map((item, i) => (
+                        <div key={i} style={{
+                          padding: '14px 16px',
+                          background: 'white',
+                          borderRadius: 12,
+                          border: '1px solid #d1fae5'
+                        }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 2 }}>{item.label}</div>
+                          <div style={{ fontSize: 12, color: '#64748b' }}>{item.desc}</div>
+                        </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
 
-                    <div style={{ padding: 24 }}>
+              {/* Company Perks - Mobile/Tablet (only on home page) */}
+              {!isDesktop && portalPage.page === 'home' && (
+                <div style={{ padding: isMobile ? 20 : 24, background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)', borderRadius: 16, border: '1px solid #bbf7d0' }}>
+                  <h4 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: '#166534' }}>Why Join AI Planet?</h4>
+                  <div className="perks-grid" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+                    {[
+                      { label: 'Hybrid', desc: 'Flexible work setup' },
+                      { label: 'Flexible Hours', desc: 'Work-life balance' },
+                      { label: 'Growth', desc: 'Fast-paced environment' },
+                      { label: 'Impact', desc: 'Meaningful work' }
+                    ].map((item, i) => (
+                      <div key={i} style={{
+                        padding: '14px 16px',
+                        background: 'white',
+                        borderRadius: 12,
+                        border: '1px solid #d1fae5'
+                      }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 2 }}>{item.label}</div>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>{item.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            )}
+          </div>
+
+          {/* Footer - Responsive */}
+          <div style={{ background: '#f8fafc', padding: isMobile ? '24px 16px' : '32px', textAlign: 'center', borderTop: '1px solid #e2e8f0' }}>
+            <p style={{ margin: 0, color: '#64748b', fontSize: isMobile ? 13 : 14 }}>
+              Questions? Contact us at <a href="mailto:careers@aiplanet.com" style={{ color: '#10b981', textDecoration: 'none', fontWeight: 500 }}>careers@aiplanet.com</a>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================
+          LOGGED IN VIEW - Application Dashboard
+          ============================================ */}
+      {candidateData && (
+        <div style={{ padding: isMobile ? '20px 12px' : isTablet ? '30px 20px' : '40px 20px', minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)' }}>
+          <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+              {/* Welcome Bar - Responsive */}
+              <div className="welcome-bar" style={{
+                background: 'white',
+                borderRadius: isMobile ? 12 : 16,
+                padding: isMobile ? '16px' : '20px 28px',
+                marginBottom: isMobile ? 16 : 24,
+                display: 'flex',
+                flexDirection: isMobile ? 'column' : 'row',
+                justifyContent: 'space-between',
+                alignItems: isMobile ? 'stretch' : 'center',
+                gap: isMobile ? 16 : 0,
+                boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+              }}>
+                <div className="welcome-bar-user" style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 16 }}>
+                  <img src="https://cdn.brandfetch.io/idZWCLNWW6/w/48/h/48/theme/dark/logo.png?c=1bxid64Mup7aczewSAYMX&t=1764560488706" alt="AI Planet" style={{ width: isMobile ? 40 : 48, height: isMobile ? 40 : 48, borderRadius: isMobile ? 10 : 12 }} />
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: isMobile ? 16 : 20, fontWeight: 700, color: '#1e293b' }}>Welcome, {candidateData.candidateName?.split(' ')[0]}</h2>
+                    <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: isMobile ? 12 : 14, wordBreak: 'break-all' }}>{candidateData.email}</p>
+                  </div>
+                </div>
+                <button onClick={() => { setCandidateData(null); setSelectedApp(null); setEmail(''); setPhoneLast5(''); }} style={{ padding: isMobile ? '12px 16px' : '10px 20px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 500, width: isMobile ? '100%' : 'auto', minHeight: 44 }}>Sign Out</button>
+              </div>
+
+              <div className="dashboard-grid" style={{
+                display: 'grid',
+                gridTemplateColumns: isDesktop ? '280px 1fr' : '1fr',
+                gap: isMobile ? 16 : 24
+              }}>
+                {/* Sidebar - Applications List - Horizontal scroll on mobile */}
+                <div className="dashboard-sidebar" style={{
+                  background: 'white',
+                  borderRadius: isMobile ? 12 : 16,
+                  overflow: 'hidden',
+                  boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+                  maxHeight: isMobile ? 'none' : isTablet ? '300px' : 'none',
+                  overflowY: isTablet ? 'auto' : 'visible'
+                }}>
+                  <div style={{ padding: isMobile ? '12px 16px' : '16px 20px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <h3 style={{ margin: 0, fontSize: isMobile ? 12 : 14, fontWeight: 600, color: '#64748b' }}>MY APPLICATIONS</h3>
+                  </div>
+                  {/* Horizontal scroll on mobile, vertical list on desktop */}
+                  <div style={{
+                    display: isMobile ? 'flex' : 'block',
+                    overflowX: isMobile ? 'auto' : 'visible',
+                    scrollSnapType: isMobile ? 'x mandatory' : 'none',
+                    WebkitOverflowScrolling: 'touch',
+                    gap: isMobile ? 8 : 0,
+                    padding: isMobile ? 8 : 0
+                  }}>
+                    {candidateData.applications?.map(app => (
+                      <div
+                        key={app.id}
+                        onClick={() => { setSelectedApp(app); fetchAppDetails(app.id, candidateData.token); }}
+                        className="app-list-item"
+                        style={{
+                          padding: isMobile ? '12px 16px' : '16px 20px',
+                          cursor: 'pointer',
+                          background: selectedApp?.id === app.id ? '#f0fdf4' : 'white',
+                          borderLeft: isMobile ? 'none' : (selectedApp?.id === app.id ? '3px solid #10b981' : '3px solid transparent'),
+                          borderBottom: isMobile ? 'none' : '1px solid #f1f5f9',
+                          border: isMobile ? (selectedApp?.id === app.id ? '2px solid #10b981' : '1px solid #e2e8f0') : undefined,
+                          borderRadius: isMobile ? 12 : 0,
+                          minWidth: isMobile ? 200 : 'auto',
+                          flexShrink: 0,
+                          scrollSnapAlign: isMobile ? 'start' : 'none'
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, color: '#1e293b', fontSize: isMobile ? 13 : 14, marginBottom: 4, whiteSpace: isMobile ? 'nowrap' : 'normal', overflow: isMobile ? 'hidden' : 'visible', textOverflow: 'ellipsis' }}>{app.jobTitle}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: getStageColor(app.stageKey), flexShrink: 0 }}></span>
+                          <span style={{ fontSize: 12, color: '#64748b' }}>{app.stage}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              {/* Main Panel - Responsive */}
+              <div style={{ background: 'white', borderRadius: isMobile ? 12 : 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}>
+                {selectedApp && (
+                  <>
+                    {/* Tab Navigation - Responsive Pill Style */}
+                    <div style={{
+                      padding: isMobile ? '12px' : '20px 24px',
+                      background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                      borderBottom: '1px solid #e2e8f0'
+                    }}>
+                      <div className="portal-tabs" style={{
+                        display: 'flex',
+                        gap: isMobile ? 4 : 6,
+                        padding: 6,
+                        background: '#e2e8f0',
+                        borderRadius: 14,
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        overflowX: 'auto',
+                        WebkitOverflowScrolling: 'touch'
+                      }}>
+                        {[
+                          { k: 'status', l: 'Status', icon: '📊' },
+                          { k: 'assignments', l: 'Tasks', icon: '📝' },
+                          { k: 'timeline', l: 'Timeline', icon: '📅' },
+                          { k: 'interviews', l: 'Interviews', icon: '🎤' },
+                          { k: 'jobs', l: 'Jobs', icon: '💼' }
+                        ].map(tab => (
+                          <button
+                            key={tab.k}
+                            onClick={() => setActiveTab(tab.k)}
+                            className={`portal-tab ${activeTab === tab.k ? 'active' : ''}`}
+                            style={{
+                              flex: isMobile ? '0 0 auto' : 1,
+                              minWidth: isMobile ? 48 : 'auto',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: isMobile ? 0 : 6,
+                              padding: isMobile ? '10px 12px' : '12px 8px',
+                              background: activeTab === tab.k ? 'white' : 'transparent',
+                              border: 'none',
+                              borderRadius: 10,
+                              cursor: 'pointer',
+                              fontWeight: activeTab === tab.k ? 700 : 500,
+                              color: activeTab === tab.k ? '#10b981' : '#64748b',
+                              fontSize: isMobile ? 12 : 13,
+                              whiteSpace: 'nowrap',
+                              transition: 'all 0.2s ease',
+                              boxShadow: activeTab === tab.k ? '0 2px 8px rgba(0,0,0,0.08)' : 'none'
+                            }}
+                          >
+                            <span className="portal-tab-icon" style={{ fontSize: isMobile ? 16 : 14 }}>{tab.icon}</span>
+                            <span className="portal-tab-label" style={{ display: isMobile ? 'none' : 'inline' }}>{tab.l}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ padding: isMobile ? 16 : 24 }}>
                       {/* Status Tab */}
                       {activeTab === 'status' && (
                         <>
-                          <div style={{ marginBottom: 24 }}>
-                            <h2 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: '#1e293b' }}>{selectedApp.jobTitle}</h2>
-                            <p style={{ margin: 0, color: '#64748b' }}>{selectedApp.location} | Applied {new Date(selectedApp.appliedAt).toLocaleDateString()}</p>
+                          <div style={{ marginBottom: isMobile ? 16 : 24 }}>
+                            <h2 style={{ margin: '0 0 8px', fontSize: isMobile ? 18 : 24, fontWeight: 700, color: '#1e293b' }}>{selectedApp.jobTitle}</h2>
+                            <p style={{ margin: 0, color: '#64748b', fontSize: isMobile ? 13 : 14 }}>{selectedApp.location} | Applied {new Date(selectedApp.appliedAt).toLocaleDateString()}</p>
                           </div>
 
-                          {/* Progress Bar */}
-                          <div style={{ marginBottom: 32 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                          {/* Progress Bar - Responsive */}
+                          <div style={{ marginBottom: isMobile ? 20 : 32, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, minWidth: isMobile ? 400 : 'auto' }}>
                               {progressSteps.map((step, i) => (
                                 <div key={step} style={{ textAlign: 'center', flex: 1 }}>
-                                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#e2e8f0', color: i <= getStepIndex(selectedApp.stageKey) ? 'white' : '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', fontWeight: 700, fontSize: 14 }}>{i + 1}</div>
-                                  <div style={{ fontSize: 11, color: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#94a3b8', fontWeight: 500 }}>{step}</div>
+                                  <div style={{ width: isMobile ? 24 : 32, height: isMobile ? 24 : 32, borderRadius: '50%', background: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#e2e8f0', color: i <= getStepIndex(selectedApp.stageKey) ? 'white' : '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 6px', fontWeight: 700, fontSize: isMobile ? 11 : 14 }}>{i + 1}</div>
+                                  <div style={{ fontSize: isMobile ? 9 : 11, color: i <= getStepIndex(selectedApp.stageKey) ? '#10b981' : '#94a3b8', fontWeight: 500 }}>{step}</div>
                                 </div>
                               ))}
                             </div>
-                            <div style={{ height: 4, background: '#e2e8f0', borderRadius: 2, position: 'relative', marginTop: 8 }}>
+                            <div style={{ height: 4, background: '#e2e8f0', borderRadius: 2, position: 'relative', marginTop: 8, minWidth: isMobile ? 400 : 'auto' }}>
                               <div style={{ height: '100%', background: '#10b981', borderRadius: 2, width: `${(getStepIndex(selectedApp.stageKey) / 5) * 100}%`, transition: 'width 0.5s' }}></div>
                             </div>
                           </div>
 
-                          {/* Current Status */}
-                          <div style={{ padding: 24, background: `${getStageColor(selectedApp.stageKey)}10`, borderRadius: 16, border: `2px solid ${getStageColor(selectedApp.stageKey)}30`, marginBottom: 24 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                              <div style={{ width: 48, height: 48, background: getStageColor(selectedApp.stageKey), borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
-                                {selectedApp.status === 'action_required' ? '⚡' : selectedApp.status === 'completed' ? '✅' : '📋'}
-                              </div>
-                              <div>
-                                <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedApp.stage}</div>
-                                <div style={{ color: '#64748b', fontSize: 13 }}>Last updated: {new Date(selectedApp.lastUpdated).toLocaleDateString()}</div>
+                          {/* Current Status - Enhanced for offer stages */}
+                          {(selectedApp.stageKey === 'offer-sent' || selectedApp.stageKey === 'offer-pending') ? (
+                            <div style={{
+                              padding: 24,
+                              background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                              borderRadius: 16,
+                              border: '2px solid #34d399',
+                              marginBottom: 24,
+                              position: 'relative',
+                              overflow: 'hidden'
+                            }}>
+                              {/* Celebration background */}
+                              <div style={{ position: 'absolute', top: -20, right: -20, fontSize: 80, opacity: 0.1 }}>🎉</div>
+                              <div style={{ position: 'relative', zIndex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+                                  <div style={{
+                                    width: 64,
+                                    height: 64,
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    borderRadius: 16,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 32,
+                                    boxShadow: '0 8px 24px rgba(16, 185, 129, 0.3)'
+                                  }}>
+                                    🎁
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight: 800, fontSize: 22, color: '#065f46', marginBottom: 4 }}>
+                                      Congratulations! 🎉
+                                    </div>
+                                    <div style={{ color: '#047857', fontSize: 15, fontWeight: 500 }}>
+                                      You've received an offer for {selectedApp.jobTitle}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{
+                                  padding: '16px 20px',
+                                  background: 'white',
+                                  borderRadius: 12,
+                                  border: '1px solid #a7f3d0'
+                                }}>
+                                  <p style={{ margin: 0, color: '#047857', lineHeight: 1.7, fontSize: 15 }}>
+                                    {selectedApp.statusDescription || 'We are excited to extend an offer to you. Please review the details below and let us know your decision.'}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                            <p style={{ margin: 0, color: '#475569', lineHeight: 1.6 }}>{selectedApp.statusDescription}</p>
-                          </div>
+                          ) : (
+                            <div style={{ padding: 24, background: `${getStageColor(selectedApp.stageKey)}10`, borderRadius: 16, border: `2px solid ${getStageColor(selectedApp.stageKey)}30`, marginBottom: 24 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                                <div style={{ width: 48, height: 48, background: getStageColor(selectedApp.stageKey), borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
+                                  {selectedApp.status === 'action_required' ? '⚡' : selectedApp.status === 'completed' ? '✅' : '📋'}
+                                </div>
+                                <div>
+                                  <div style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>{selectedApp.stage}</div>
+                                  <div style={{ color: '#64748b', fontSize: 13 }}>Last updated: {new Date(selectedApp.lastUpdated).toLocaleDateString()}</div>
+                                </div>
+                              </div>
+                              <p style={{ margin: 0, color: '#475569', lineHeight: 1.6 }}>{selectedApp.statusDescription}</p>
+                            </div>
+                          )}
 
                           {/* Upcoming Interview */}
                           {selectedApp.upcomingInterview && (
@@ -1888,11 +3083,214 @@ const CandidatePortalView = ({ API_BASE }) => {
                             </div>
                           )}
 
-                          {/* Offer Response Buttons */}
-                          {selectedApp.stageKey === 'offer-pending' && (
-                            <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
-                              <button onClick={() => handleOfferResponse('accept')} style={{ flex: 1, padding: '16px 24px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: 'pointer' }}>Accept Offer</button>
-                              <button onClick={() => handleOfferResponse('decline')} style={{ flex: 1, padding: '16px 24px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: 'pointer' }}>Decline Offer</button>
+                          {/* Offer Details Section */}
+                          {appDetails?.offerDetails && (
+                            <div style={{
+                              marginBottom: 24,
+                              background: 'white',
+                              borderRadius: 16,
+                              border: '2px solid #86efac',
+                              overflow: 'hidden',
+                              boxShadow: '0 4px 20px rgba(16, 185, 129, 0.1)'
+                            }}>
+                              {/* Offer Header */}
+                              <div style={{
+                                padding: '16px 24px',
+                                background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
+                                borderBottom: '1px solid #86efac'
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <span style={{ fontSize: 20 }}>📄</span>
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: '#166534' }}>Offer Details</div>
+                                </div>
+                              </div>
+
+                              {/* Offer Content */}
+                              <div style={{ padding: 24 }}>
+                                {/* Compensation Details */}
+                                {(appDetails.offerDetails.salary || appDetails.offerDetails.bonus || appDetails.offerDetails.benefits) && (
+                                  <div style={{ marginBottom: 20 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', textTransform: 'uppercase', marginBottom: 12 }}>Compensation Package</div>
+                                    <div style={{ display: 'grid', gap: 12 }}>
+                                      {appDetails.offerDetails.salary && (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'white', borderRadius: 10, border: '1px solid #d1fae5' }}>
+                                          <span style={{ color: '#64748b', fontSize: 14 }}>Annual Salary</span>
+                                          <span style={{ fontWeight: 700, color: '#166534', fontSize: 15 }}>
+                                            {appDetails.offerDetails.salaryCurrency === 'INR' ? '₹' : '$'}{appDetails.offerDetails.salary}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {appDetails.offerDetails.bonus && (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'white', borderRadius: 10, border: '1px solid #d1fae5' }}>
+                                          <span style={{ color: '#64748b', fontSize: 14 }}>Bonus</span>
+                                          <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 14 }}>{appDetails.offerDetails.bonus}</span>
+                                        </div>
+                                      )}
+                                      {appDetails.offerDetails.equity && (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: 'white', borderRadius: 10, border: '1px solid #d1fae5' }}>
+                                          <span style={{ color: '#64748b', fontSize: 14 }}>Equity</span>
+                                          <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 14 }}>{appDetails.offerDetails.equity}</span>
+                                        </div>
+                                      )}
+                                      {appDetails.offerDetails.benefits && (
+                                        <div style={{ padding: '12px 16px', background: 'white', borderRadius: 10, border: '1px solid #d1fae5' }}>
+                                          <span style={{ color: '#64748b', fontSize: 14, display: 'block', marginBottom: 6 }}>Benefits</span>
+                                          <span style={{ color: '#1e293b', fontSize: 14 }}>{appDetails.offerDetails.benefits}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Important Dates */}
+                                {(appDetails.offerDetails.startDate || appDetails.offerDetails.expiryDate) && (
+                                  <div style={{ marginBottom: 20 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', textTransform: 'uppercase', marginBottom: 12 }}>Important Dates</div>
+                                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                      {appDetails.offerDetails.startDate && (
+                                        <div style={{ flex: 1, minWidth: 150, padding: '12px 16px', background: 'white', borderRadius: 10, border: '1px solid #d1fae5' }}>
+                                          <div style={{ color: '#64748b', fontSize: 12, marginBottom: 4 }}>Start Date</div>
+                                          <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                                            {new Date(appDetails.offerDetails.startDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {appDetails.offerDetails.expiryDate && (
+                                        <div style={{ flex: 1, minWidth: 150, padding: '12px 16px', background: '#fef3c7', borderRadius: 10, border: '1px solid #fde68a' }}>
+                                          <div style={{ color: '#92400e', fontSize: 12, marginBottom: 4 }}>Respond By</div>
+                                          <div style={{ fontWeight: 600, color: '#92400e', fontSize: 14 }}>
+                                            {new Date(appDetails.offerDetails.expiryDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Offer Letter Content (Text) */}
+                                {appDetails.offerDetails.offerType === 'text' && appDetails.offerDetails.offerContent && (
+                                  <div style={{ marginBottom: 20 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', textTransform: 'uppercase', marginBottom: 12 }}>Offer Letter</div>
+                                    <div style={{
+                                      padding: 20,
+                                      background: 'white',
+                                      borderRadius: 12,
+                                      border: '1px solid #d1fae5',
+                                      fontSize: 14,
+                                      color: '#334155',
+                                      lineHeight: 1.7,
+                                      whiteSpace: 'pre-wrap'
+                                    }}>
+                                      {appDetails.offerDetails.offerContent}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Offer Letter File (PDF/Word) */}
+                                {appDetails.offerDetails.offerFile && (
+                                  <div style={{ marginBottom: 20 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', textTransform: 'uppercase', marginBottom: 12 }}>Offer Letter Document</div>
+                                    <a
+                                      href={appDetails.offerDetails.offerFile.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 12,
+                                        padding: '16px 20px',
+                                        background: 'white',
+                                        borderRadius: 12,
+                                        border: '2px solid #d1fae5',
+                                        textDecoration: 'none',
+                                        transition: 'all 0.2s'
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 32 }}>
+                                        {appDetails.offerDetails.offerFile.type?.includes('pdf') ? '📄' : '📝'}
+                                      </span>
+                                      <div style={{ flex: 1 }}>
+                                        <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 15 }}>
+                                          {appDetails.offerDetails.offerFile.name || 'Offer Letter'}
+                                        </div>
+                                        <div style={{ fontSize: 13, color: '#64748b' }}>Click to download and review</div>
+                                      </div>
+                                      <span style={{
+                                        padding: '8px 16px',
+                                        background: '#10b981',
+                                        color: 'white',
+                                        borderRadius: 8,
+                                        fontSize: 13,
+                                        fontWeight: 600
+                                      }}>
+                                        Download
+                                      </span>
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Offer Response Buttons - Enhanced */}
+                          {(selectedApp.stageKey === 'offer-sent' || selectedApp.stageKey === 'offer-pending') && (
+                            <div style={{
+                              padding: 24,
+                              background: 'linear-gradient(135deg, #fefce8 0%, #fef9c3 100%)',
+                              borderRadius: 16,
+                              border: '2px solid #fde047',
+                              marginBottom: 24
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                                <span style={{ fontSize: 24 }}>⏰</span>
+                                <div>
+                                  <div style={{ fontWeight: 700, color: '#854d0e', fontSize: 16 }}>Your Response Required</div>
+                                  <div style={{ color: '#a16207', fontSize: 13 }}>Please review the offer details and respond</div>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 12 }}>
+                                <button
+                                  onClick={() => handleOfferResponse('accept')}
+                                  style={{
+                                    flex: 1,
+                                    padding: '18px 24px',
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 12,
+                                    fontSize: 16,
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 8
+                                  }}
+                                >
+                                  <span>✓</span> Accept Offer
+                                </button>
+                                <button
+                                  onClick={() => handleOfferResponse('decline')}
+                                  style={{
+                                    flex: 1,
+                                    padding: '18px 24px',
+                                    background: 'white',
+                                    color: '#dc2626',
+                                    border: '2px solid #fecaca',
+                                    borderRadius: 12,
+                                    fontSize: 16,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 8
+                                  }}
+                                >
+                                  <span>✗</span> Decline Offer
+                                </button>
+                              </div>
                             </div>
                           )}
 
@@ -1904,6 +3302,137 @@ const CandidatePortalView = ({ API_BASE }) => {
                             )}
                           </div>
                         </>
+                      )}
+
+                      {/* Assignments Tab */}
+                      {activeTab === 'assignments' && (
+                        <div>
+                          <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b' }}>Your Assignments</h3>
+                          {assignments.length > 0 ? (
+                            assignments.map((assignment) => (
+                              <div key={assignment.id} style={{ padding: 20, background: assignment.canSubmit ? '#fffbeb' : '#f8fafc', borderRadius: 12, marginBottom: 16, border: `2px solid ${assignment.canSubmit ? '#fbbf24' : '#e2e8f0'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                                  <div>
+                                    <div style={{ fontWeight: 700, color: '#1e293b', fontSize: 16, marginBottom: 4 }}>{assignment.assignmentName}</div>
+                                    <div style={{ fontSize: 13, color: '#64748b' }}>For: {assignment.jobTitle}</div>
+                                  </div>
+                                  <span style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: assignment.status === 'submitted' ? '#d1fae5' : assignment.status === 'reviewed' ? '#dbeafe' : assignment.isOverdue ? '#fecaca' : '#fef3c7', color: assignment.status === 'submitted' ? '#065f46' : assignment.status === 'reviewed' ? '#1e40af' : assignment.isOverdue ? '#b91c1c' : '#92400e' }}>
+                                    {assignment.status === 'submitted' ? 'Submitted' : assignment.status === 'reviewed' ? 'Reviewed' : assignment.isOverdue ? 'Overdue' : 'Pending'}
+                                  </span>
+                                </div>
+
+                                {assignment.instructions && (
+                                  <div style={{ padding: 14, background: 'white', borderRadius: 8, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                                    <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 6 }}>INSTRUCTIONS</div>
+                                    <div style={{ fontSize: 14, color: '#334155', lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: assignment.instructions }} />
+                                  </div>
+                                )}
+
+                                {assignment.deadline && (
+                                  <div style={{ fontSize: 13, color: assignment.isOverdue ? '#dc2626' : '#64748b', marginBottom: 12 }}>
+                                    <strong>Deadline:</strong> {new Date(assignment.deadline).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                  </div>
+                                )}
+
+                                {assignment.link && (
+                                  <div style={{ marginBottom: 12 }}>
+                                    <a href={assignment.link} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: 14, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span>📎</span> Assignment Link
+                                    </a>
+                                  </div>
+                                )}
+
+                                {assignment.files?.length > 0 && (
+                                  <div style={{ marginBottom: 12 }}>
+                                    <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 6 }}>ATTACHED FILES</div>
+                                    {assignment.files.map((file, i) => (
+                                      <a key={i} href={file.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', color: '#3b82f6', fontSize: 13, textDecoration: 'none', marginBottom: 4 }}>📄 {file.name}</a>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Submission Info */}
+                                {assignment.submissionDate && (
+                                  <div style={{ padding: 14, background: '#d1fae5', borderRadius: 8, marginBottom: 12, border: '1px solid #86efac' }}>
+                                    <div style={{ fontSize: 12, color: '#065f46', fontWeight: 600, marginBottom: 6 }}>✓ SUBMITTED</div>
+                                    <div style={{ fontSize: 13, color: '#047857' }}>
+                                      Submitted on {new Date(assignment.submissionDate).toLocaleDateString()}
+                                    </div>
+                                    {/* Show submission links */}
+                                    {(assignment.submissionLinks?.length > 0 || assignment.submissionLink) && (
+                                      <div style={{ marginTop: 8 }}>
+                                        <div style={{ fontSize: 12, color: '#065f46', marginBottom: 4 }}>Your links:</div>
+                                        {(assignment.submissionLinks?.length > 0 ? assignment.submissionLinks : [assignment.submissionLink]).filter(Boolean).map((link, i) => (
+                                          <a key={i} href={link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', color: '#059669', fontSize: 13, textDecoration: 'none', marginBottom: 4 }}>🔗 {link.length > 40 ? link.substring(0, 40) + '...' : link}</a>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {assignment.submissionFiles?.length > 0 && (
+                                      <div style={{ marginTop: 8 }}>
+                                        <div style={{ fontSize: 12, color: '#065f46', marginBottom: 4 }}>Your files:</div>
+                                        {assignment.submissionFiles.map((file, i) => (
+                                          <button
+                                            key={i}
+                                            onClick={async () => {
+                                              try {
+                                                showToast('Loading file...');
+                                                let key = file.url;
+                                                try {
+                                                  const urlObj = new URL(file.url);
+                                                  key = urlObj.pathname.startsWith('/') ? urlObj.pathname.substring(1) : urlObj.pathname;
+                                                } catch (e) {}
+                                                const res = await fetch(`${API_BASE}/portal/file/signed-url?key=${encodeURIComponent(key)}&email=${encodeURIComponent(email)}`);
+                                                const data = await res.json();
+                                                if (data.success && data.signedUrl) {
+                                                  window.open(data.signedUrl, '_blank');
+                                                } else {
+                                                  showToast('Failed to load file');
+                                                }
+                                              } catch (error) {
+                                                console.error('Error getting file URL:', error);
+                                                showToast('Failed to load file');
+                                              }
+                                            }}
+                                            style={{
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: 6,
+                                              padding: '6px 12px',
+                                              background: '#bbf7d0',
+                                              borderRadius: 6,
+                                              fontSize: 12,
+                                              marginRight: 8,
+                                              marginBottom: 6,
+                                              color: '#065f46',
+                                              cursor: 'pointer',
+                                              border: '1px solid #86efac'
+                                            }}
+                                          >
+                                            📄 {file.name}
+                                            <span style={{ fontSize: 10, opacity: 0.7 }}>↓</span>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Submit Button */}
+                                {assignment.canSubmit && (
+                                  <button onClick={() => { setSelectedAssignment(assignment); setShowSubmitModal(true); }} style={{ width: '100%', padding: '14px 20px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 700, fontSize: 15 }}>
+                                    Submit Assignment
+                                  </button>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
+                              <div style={{ fontSize: 48, marginBottom: 12 }}>📝</div>
+                              <div>No assignments pending</div>
+                              <div style={{ fontSize: 13, marginTop: 8 }}>Assignments will appear here when assigned</div>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {/* Timeline Tab */}
@@ -1932,17 +3461,57 @@ const CandidatePortalView = ({ API_BASE }) => {
                           <h3 style={{ margin: '0 0 20px', fontSize: 18, fontWeight: 700, color: '#1e293b' }}>Interviews</h3>
                           {appDetails?.interviews?.length > 0 ? (
                             appDetails.interviews.map((interview, i) => (
-                              <div key={i} style={{ padding: 20, background: '#f8fafc', borderRadius: 12, marginBottom: 12, border: '1px solid #e2e8f0' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                  <div>
+                              <div key={i} style={{
+                                padding: 20,
+                                background: interview.result === 'Passed' ? '#f0fdf4' : interview.result === 'Not Selected' ? '#fef2f2' : '#f8fafc',
+                                borderRadius: 12,
+                                marginBottom: 12,
+                                border: `1px solid ${interview.result === 'Passed' ? '#86efac' : interview.result === 'Not Selected' ? '#fecaca' : '#e2e8f0'}`
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                                  <div style={{ flex: 1, minWidth: 200 }}>
                                     <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>{interview.title}</div>
                                     <div style={{ fontSize: 13, color: '#64748b' }}>
                                       {new Date(interview.date).toLocaleDateString()} at {interview.time} | {interview.type}
                                     </div>
                                     {interview.interviewer && <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>With: {interview.interviewer}</div>}
+
+                                    {/* Success Message for Passed Interviews */}
+                                    {interview.result === 'Passed' && (
+                                      <div style={{
+                                        marginTop: 12,
+                                        padding: '10px 14px',
+                                        background: '#dcfce7',
+                                        borderRadius: 8,
+                                        border: '1px solid #86efac'
+                                      }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                          <span style={{ fontSize: 18 }}>🎉</span>
+                                          <div>
+                                            <div style={{ fontWeight: 600, color: '#166534', fontSize: 14 }}>Interview Successful!</div>
+                                            <div style={{ fontSize: 12, color: '#15803d', marginTop: 2 }}>
+                                              Congratulations! You've passed this interview round.
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
-                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <span style={{ padding: '4px 12px', background: interview.status === 'Scheduled' ? '#fef3c7' : '#d1fae5', color: interview.status === 'Scheduled' ? '#92400e' : '#065f46', borderRadius: 20, fontSize: 12, fontWeight: 500 }}>{interview.status}</span>
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span style={{
+                                      padding: '4px 12px',
+                                      background: interview.result === 'Passed' ? '#dcfce7' :
+                                                  interview.result === 'Not Selected' ? '#fee2e2' :
+                                                  interview.status === 'Scheduled' ? '#fef3c7' : '#d1fae5',
+                                      color: interview.result === 'Passed' ? '#166534' :
+                                             interview.result === 'Not Selected' ? '#dc2626' :
+                                             interview.status === 'Scheduled' ? '#92400e' : '#065f46',
+                                      borderRadius: 20,
+                                      fontSize: 12,
+                                      fontWeight: 600
+                                    }}>
+                                      {interview.result || interview.status}
+                                    </span>
                                     {interview.status === 'Scheduled' && (
                                       <>
                                         <button onClick={() => addToCalendar(interview.id)} style={{ padding: '6px 12px', background: '#ede9fe', color: '#7c3aed', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Add to Calendar</button>
@@ -1995,14 +3564,14 @@ const CandidatePortalView = ({ API_BASE }) => {
                 )}
               </div>
             </div>
-          </>
-        )}
+          </div>
 
-        {/* Footer */}
-        <div style={{ textAlign: 'center', marginTop: 40, color: '#64748b', fontSize: 14 }}>
-          <p style={{ margin: 0 }}>Questions? Contact us at <a href="mailto:careers@aiplanet.com" style={{ color: '#10b981' }}>careers@aiplanet.com</a></p>
+          {/* Footer */}
+          <div style={{ textAlign: 'center', marginTop: 40, color: '#94a3b8', fontSize: 14 }}>
+            <p style={{ margin: 0 }}>Questions? Contact us at <a href="mailto:careers@aiplanet.com" style={{ color: '#10b981' }}>careers@aiplanet.com</a></p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Withdraw Modal */}
       {showWithdrawModal && (
@@ -2033,6 +3602,379 @@ const CandidatePortalView = ({ API_BASE }) => {
           </div>
         </div>
       )}
+
+      {/* Accept Offer Modal */}
+      {showAcceptOfferModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={() => !offerResponseLoading && setShowAcceptOfferModal(false)}>
+          <div style={{ background: 'white', borderRadius: 24, maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              padding: '24px 28px',
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              borderRadius: '24px 24px 0 0',
+              color: 'white',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+              <h3 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700 }}>Accept Offer</h3>
+              <p style={{ margin: 0, opacity: 0.9, fontSize: 15 }}>You're about to accept the offer for {selectedApp?.jobTitle}</p>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: 28 }}>
+              {/* Warning */}
+              <div style={{
+                padding: '16px 20px',
+                background: '#fef3c7',
+                borderRadius: 12,
+                border: '1px solid #fde68a',
+                marginBottom: 24,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12
+              }}>
+                <span style={{ fontSize: 20 }}>⚠️</span>
+                <div>
+                  <div style={{ fontWeight: 600, color: '#92400e', marginBottom: 4 }}>Please Confirm</div>
+                  <div style={{ fontSize: 13, color: '#a16207', lineHeight: 1.5 }}>
+                    By accepting this offer, you confirm your intent to join AI Planet. Please provide your preferred joining details below.
+                  </div>
+                </div>
+              </div>
+
+              {/* Joining Date */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                  Preferred Joining Date <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <input
+                  type="date"
+                  value={acceptOfferData.joiningDate}
+                  onChange={e => setAcceptOfferData({ ...acceptOfferData, joiningDate: e.target.value })}
+                  min={new Date().toISOString().split('T')[0]}
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    boxSizing: 'border-box',
+                    outline: 'none'
+                  }}
+                />
+                <p style={{ margin: '8px 0 0', fontSize: 12, color: '#64748b' }}>
+                  Select a date on or after the start date mentioned in your offer
+                </p>
+              </div>
+
+              {/* Joining Location */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                  Location <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={acceptOfferData.joiningLocation}
+                  onChange={e => setAcceptOfferData({ ...acceptOfferData, joiningLocation: e.target.value })}
+                  placeholder="e.g., Hyderabad Office, Remote"
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 15,
+                    boxSizing: 'border-box',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              {/* Additional Message */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                  Additional Message (Optional)
+                </label>
+                <textarea
+                  value={acceptOfferData.message}
+                  onChange={e => setAcceptOfferData({ ...acceptOfferData, message: e.target.value })}
+                  placeholder="Any additional information you'd like to share..."
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 14,
+                    minHeight: 80,
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { setShowAcceptOfferModal(false); setAcceptOfferData({ joiningDate: '', joiningLocation: '', message: '' }); }}
+                  disabled={offerResponseLoading}
+                  style={{
+                    flex: 1,
+                    padding: '16px 24px',
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: 'none',
+                    borderRadius: 12,
+                    cursor: offerResponseLoading ? 'not-allowed' : 'pointer',
+                    fontWeight: 600,
+                    fontSize: 15,
+                    opacity: offerResponseLoading ? 0.5 : 1
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitOfferAcceptance}
+                  disabled={offerResponseLoading || !acceptOfferData.joiningDate || !acceptOfferData.joiningLocation}
+                  style={{
+                    flex: 1,
+                    padding: '16px 24px',
+                    background: (acceptOfferData.joiningDate && acceptOfferData.joiningLocation && !offerResponseLoading)
+                      ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                      : '#e2e8f0',
+                    color: (acceptOfferData.joiningDate && acceptOfferData.joiningLocation && !offerResponseLoading) ? 'white' : '#94a3b8',
+                    border: 'none',
+                    borderRadius: 12,
+                    cursor: (acceptOfferData.joiningDate && acceptOfferData.joiningLocation && !offerResponseLoading) ? 'pointer' : 'not-allowed',
+                    fontWeight: 700,
+                    fontSize: 15,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8
+                  }}
+                >
+                  {offerResponseLoading ? (
+                    <>
+                      <div style={{ width: 18, height: 18, border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                      Processing...
+                    </>
+                  ) : (
+                    <>✓ Confirm Acceptance</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Decline Offer Modal */}
+      {showDeclineOfferModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={() => !offerResponseLoading && setShowDeclineOfferModal(false)}>
+          <div style={{ background: 'white', borderRadius: 24, maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              padding: '24px 28px',
+              background: 'linear-gradient(135deg, #fecaca 0%, #fca5a5 100%)',
+              borderRadius: '24px 24px 0 0',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🤔</div>
+              <h3 style={{ margin: '0 0 8px', fontSize: 24, fontWeight: 700, color: '#991b1b' }}>Decline Offer</h3>
+              <p style={{ margin: 0, color: '#b91c1c', fontSize: 15 }}>We're sorry to see you go</p>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: 28 }}>
+              {/* Info */}
+              <div style={{
+                padding: '16px 20px',
+                background: '#fef2f2',
+                borderRadius: 12,
+                border: '1px solid #fecaca',
+                marginBottom: 24,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12
+              }}>
+                <span style={{ fontSize: 20 }}>ℹ️</span>
+                <div>
+                  <div style={{ fontWeight: 600, color: '#991b1b', marginBottom: 4 }}>Before you decline</div>
+                  <div style={{ fontSize: 13, color: '#b91c1c', lineHeight: 1.5 }}>
+                    If you have any concerns about the offer, feel free to reach out to us. We may be able to address them.
+                  </div>
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>
+                  Reason for Declining <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <textarea
+                  value={declineOfferReason}
+                  onChange={e => setDeclineOfferReason(e.target.value)}
+                  placeholder="Please share your reason for declining this offer. This feedback helps us improve."
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: 12,
+                    fontSize: 14,
+                    minHeight: 120,
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                    outline: 'none'
+                  }}
+                />
+                <p style={{ margin: '8px 0 0', fontSize: 12, color: '#64748b' }}>
+                  Common reasons: Accepted another offer, Compensation concerns, Personal reasons, Location constraints
+                </p>
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => { setShowDeclineOfferModal(false); setDeclineOfferReason(''); }}
+                  disabled={offerResponseLoading}
+                  style={{
+                    flex: 1,
+                    padding: '16px 24px',
+                    background: '#f1f5f9',
+                    color: '#475569',
+                    border: 'none',
+                    borderRadius: 12,
+                    cursor: offerResponseLoading ? 'not-allowed' : 'pointer',
+                    fontWeight: 600,
+                    fontSize: 15,
+                    opacity: offerResponseLoading ? 0.5 : 1
+                  }}
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={submitOfferDecline}
+                  disabled={offerResponseLoading || !declineOfferReason.trim()}
+                  style={{
+                    flex: 1,
+                    padding: '16px 24px',
+                    background: (declineOfferReason.trim() && !offerResponseLoading) ? '#dc2626' : '#e2e8f0',
+                    color: (declineOfferReason.trim() && !offerResponseLoading) ? 'white' : '#94a3b8',
+                    border: 'none',
+                    borderRadius: 12,
+                    cursor: (declineOfferReason.trim() && !offerResponseLoading) ? 'pointer' : 'not-allowed',
+                    fontWeight: 600,
+                    fontSize: 15,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8
+                  }}
+                >
+                  {offerResponseLoading ? (
+                    <>
+                      <div style={{ width: 18, height: 18, border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                      Processing...
+                    </>
+                  ) : (
+                    <>Decline Offer</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submit Assignment Modal */}
+      {showSubmitModal && selectedAssignment && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => { setShowSubmitModal(false); setSelectedAssignment(null); }}>
+          <div style={{ background: 'white', borderRadius: 20, padding: 32, maxWidth: 550, width: '90%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 700, color: '#1e293b' }}>Submit Assignment</h3>
+            <p style={{ margin: '0 0 24px', color: '#64748b', fontSize: 14 }}>{selectedAssignment.assignmentName}</p>
+
+            {/* Submission Links */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>Submission Links (GitHub, Google Drive, etc.)</label>
+              {submissionLinks.map((link, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <input
+                    value={link}
+                    onChange={e => {
+                      const newLinks = [...submissionLinks];
+                      newLinks[idx] = e.target.value;
+                      setSubmissionLinks(newLinks);
+                    }}
+                    placeholder="https://github.com/username/repo"
+                    style={{ flex: 1, padding: 14, border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 14, boxSizing: 'border-box' }}
+                  />
+                  {submissionLinks.length > 1 && (
+                    <button
+                      onClick={() => setSubmissionLinks(submissionLinks.filter((_, i) => i !== idx))}
+                      style={{ padding: '0 14px', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 18, fontWeight: 600 }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+              {submissionLinks.length < 5 && (
+                <button
+                  onClick={() => setSubmissionLinks([...submissionLinks, ''])}
+                  style={{ padding: '8px 16px', background: '#f0fdf4', color: '#059669', border: '1px dashed #86efac', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, width: '100%' }}
+                >
+                  + Add Another Link
+                </button>
+              )}
+            </div>
+
+            {/* File Upload */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>Upload Files (max 5 files, 50MB each)</label>
+              <div style={{ border: '2px dashed #d1d5db', borderRadius: 12, padding: 24, textAlign: 'center', background: '#f9fafb' }}>
+                <input type="file" multiple accept=".pdf,.zip,.doc,.docx,.txt,.js,.jsx,.ts,.tsx,.py,.java,.cpp,.c,.html,.css,.json,.md,.png,.jpg,.jpeg,.gif" onChange={e => setSubmissionFiles([...submissionFiles, ...Array.from(e.target.files)].slice(0, 5))} style={{ display: 'none' }} id="assignmentFileInput" />
+                <label htmlFor="assignmentFileInput" style={{ cursor: 'pointer' }}>
+                  <div style={{ fontSize: 40, marginBottom: 8 }}>📁</div>
+                  <div style={{ color: '#10b981', fontWeight: 600, marginBottom: 4 }}>Click to upload files</div>
+                  <div style={{ color: '#9ca3af', fontSize: 13 }}>PDF, ZIP, DOC, code files supported</div>
+                </label>
+              </div>
+              {submissionFiles.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  {submissionFiles.map((file, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f0fdf4', borderRadius: 8, marginBottom: 8, border: '1px solid #bbf7d0' }}>
+                      <span style={{ fontSize: 14, color: '#166534' }}>📄 {file.name}</span>
+                      <button onClick={() => setSubmissionFiles(submissionFiles.filter((_, idx) => idx !== i))} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: 18 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#1e293b', fontSize: 14 }}>Additional Notes (optional)</label>
+              <textarea value={submissionNotes} onChange={e => setSubmissionNotes(e.target.value)} placeholder="Any notes or comments about your submission..." style={{ width: '100%', padding: 14, border: '2px solid #e2e8f0', borderRadius: 12, fontSize: 14, minHeight: 80, resize: 'vertical', boxSizing: 'border-box' }} />
+            </div>
+
+            {/* Deadline Warning */}
+            {selectedAssignment.isOverdue && (
+              <div style={{ padding: 14, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, marginBottom: 20 }}>
+                <div style={{ color: '#dc2626', fontWeight: 600, fontSize: 14 }}>⚠️ This assignment is past its deadline</div>
+                <div style={{ color: '#b91c1c', fontSize: 13 }}>You can still submit, but it may be marked as late.</div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={() => { setShowSubmitModal(false); setSelectedAssignment(null); setSubmissionLinks(['']); setSubmissionFiles([]); setSubmissionNotes(''); }} style={{ flex: 1, padding: '14px 24px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button onClick={handleSubmitAssignment} disabled={submitting || (submissionLinks.filter(l => l && l.trim()).length === 0 && submissionFiles.length === 0)} style={{ flex: 1, padding: '14px 24px', background: (submissionLinks.filter(l => l && l.trim()).length === 0 && submissionFiles.length === 0) ? '#e2e8f0' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: (submissionLinks.filter(l => l && l.trim()).length === 0 && submissionFiles.length === 0) ? '#94a3b8' : 'white', border: 'none', borderRadius: 12, cursor: (submissionLinks.filter(l => l && l.trim()).length === 0 && submissionFiles.length === 0) ? 'not-allowed' : 'pointer', fontWeight: 700 }}>
+                {submitting ? 'Submitting...' : 'Submit Assignment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2057,9 +3999,16 @@ const routeToView = {
 const getViewFromPath = (pathname) => {
   if (pathname.match(/^\/apply\/[^/]+\/submit$/)) return 'apply';
   if (pathname.startsWith('/apply/')) return 'publicJobDetails';
+  if (pathname.startsWith('/careers/job/')) return 'publicJobDetails'; // Job detail from careers portal
   if (pathname.startsWith('/applications/candidate/')) return 'profile';
   if (pathname.startsWith('/jobs/')) return 'jobs';
+  // Portal routes - all handled by CandidatePortalView
   if (pathname === '/portal' || pathname === '/check-status') return 'portal';
+  if (pathname === '/careers' || pathname === '/careers/') return 'portal';
+  if (pathname.startsWith('/careers/jobs')) return 'portal';
+  // Note: /careers/job/:id is handled above as 'publicJobDetails'
+  if (pathname.startsWith('/careers/track')) return 'portal'; // Track application
+  if (pathname.startsWith('/careers/status')) return 'portal'; // Application status/dashboard
   return routeToView[pathname] || 'login';
 };
 
@@ -2184,6 +4133,8 @@ export default function App() {
 
   // Comments and rejection
   const [commentText, setCommentText] = useState('');
+  const [commentAttachments, setCommentAttachments] = useState([]);
+  const [isUploadingCommentFile, setIsUploadingCommentFile] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
 
@@ -2193,6 +4144,10 @@ export default function App() {
   const [showRevertStageModal, setShowRevertStageModal] = useState(false);
   const [revertReason, setRevertReason] = useState('');
   const [revertTargetStage, setRevertTargetStage] = useState('');
+
+  // Force Move to Next Stage
+  const [showForceMoveModal, setShowForceMoveModal] = useState(false);
+  const [forceMoveReason, setForceMoveReason] = useState('');
 
   // Task assignment
   const [assignedTo, setAssignedTo] = useState(null);
@@ -2287,6 +4242,13 @@ export default function App() {
   const [isProcessingHire, setIsProcessingHire] = useState(false);
   const [showHireSuccessModal, setShowHireSuccessModal] = useState(false);
   const [hiredCandidateData, setHiredCandidateData] = useState(null);
+
+  // Talent Pool modal
+  const [showTalentPoolModal, setShowTalentPoolModal] = useState(false);
+  const [talentPoolForm, setTalentPoolForm] = useState({ reason: '', tags: [], notes: '' });
+  const [talentPoolTagInput, setTalentPoolTagInput] = useState('');
+  const [isAddingToTalentPool, setIsAddingToTalentPool] = useState(false);
+  const [saveForLaterOnReject, setSaveForLaterOnReject] = useState(false);
 
   // Pipeline view layout
   const [activeStage, setActiveStage] = useState('shortlisting');
@@ -3080,6 +5042,69 @@ export default function App() {
     setTimeout(() => setToast(''), 2500);
   };
 
+  // Meeting link validation helper
+  const validateMeetingLink = (platform, link) => {
+    if (!link) return { valid: false, error: 'Meeting link is required' };
+
+    const trimmedLink = link.trim().toLowerCase();
+
+    switch (platform) {
+      case 'Google Meet':
+        // Valid Google Meet formats:
+        // https://meet.google.com/xxx-xxxx-xxx
+        // https://meet.google.com/lookup/xxxxx
+        const googleMeetRegex = /^https:\/\/meet\.google\.com\/([\w-]+|lookup\/[\w-]+)$/i;
+        if (!googleMeetRegex.test(link.trim())) {
+          return {
+            valid: false,
+            error: 'Invalid Google Meet link. Format: https://meet.google.com/xxx-xxxx-xxx'
+          };
+        }
+        break;
+
+      case 'Zoom':
+        // Valid Zoom formats:
+        // https://zoom.us/j/xxxxxxxxx
+        // https://us02web.zoom.us/j/xxxxxxxxx
+        // https://company.zoom.us/j/xxxxxxxxx
+        const zoomRegex = /^https:\/\/([\w-]+\.)?zoom\.us\/(j|my)\/[\w-]+/i;
+        if (!zoomRegex.test(link.trim())) {
+          return {
+            valid: false,
+            error: 'Invalid Zoom link. Format: https://zoom.us/j/xxxxxxxxx'
+          };
+        }
+        break;
+
+      case 'Microsoft Teams':
+        // Valid Teams formats:
+        // https://teams.microsoft.com/l/meetup-join/...
+        // https://teams.live.com/meet/...
+        const teamsRegex = /^https:\/\/(teams\.(microsoft|live)\.com)\/(l\/meetup-join|meet)\/.+/i;
+        if (!teamsRegex.test(link.trim())) {
+          return {
+            valid: false,
+            error: 'Invalid Microsoft Teams link. Use a valid Teams meeting URL'
+          };
+        }
+        break;
+
+      case 'Phone Call':
+        // No URL validation needed for phone calls
+        return { valid: true };
+
+      default:
+        // For other platforms, just check it's a valid URL
+        try {
+          new URL(link);
+        } catch {
+          return { valid: false, error: 'Please enter a valid URL' };
+        }
+    }
+
+    return { valid: true };
+  };
+
   // Helper to extract S3 key from URL
   const extractS3KeyFromUrl = (url) => {
     if (!url) return null;
@@ -3476,7 +5501,7 @@ export default function App() {
       name: candidateForm.name,
       role: candidateForm.job,
       email: candidateForm.email,
-      phone: candidateForm.phone || 'Not provided',
+      phone: candidateForm.phone ? `+91${candidateForm.phone.replace(/^\+91/, '')}` : 'Not provided',
       location: 'Not specified',
       experience: '',
       appliedDate: today,
@@ -3535,8 +5560,8 @@ export default function App() {
       pop('Please enter your email');
       return;
     }
-    if (!applicationForm.phone.trim()) {
-      pop('Please enter your phone number');
+    if (!applicationForm.phone.trim() || applicationForm.phone.length !== 10) {
+      pop('Please enter a valid 10-digit phone number');
       return;
     }
     if (!applicationForm.resume) {
@@ -3611,7 +5636,7 @@ export default function App() {
         // Candidate data
         name: applicationForm.name,
         email: applicationForm.email,
-        phone: applicationForm.phone || null,
+        phone: applicationForm.phone ? `+91${applicationForm.phone}` : null,
         linkedin_url: applicationForm.linkedIn || null,
         portfolio_url: applicationForm.github || null,
         // Application data
@@ -4528,7 +6553,7 @@ export default function App() {
               Sorry, we couldn't find the job opening you're looking for. It may have been closed or the link might be incorrect.
             </p>
             <button
-              onClick={() => window.location.href = '/'}
+              onClick={() => window.location.href = '/careers'}
               style={{
                 padding: '14px 28px',
                 background: 'linear-gradient(135deg, #44924c, #2d6a33)',
@@ -4540,7 +6565,7 @@ export default function App() {
                 cursor: 'pointer'
               }}
             >
-              Go to Homepage
+              View Open Positions
             </button>
           </div>
         </div>
@@ -4686,82 +6711,142 @@ export default function App() {
       );
     }
 
+    // Responsive breakpoints for job detail page
+    const isJobMobile = window.innerWidth < 640;
+    const isJobTablet = window.innerWidth >= 640 && window.innerWidth < 1024;
+
     return (
       <div style={{
         minHeight: '100vh',
         background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%)',
-        padding: '40px 20px',
+        padding: isJobMobile ? '20px 12px' : isJobTablet ? '30px 20px' : '40px 20px',
         fontFamily: "'Work Sans', system-ui, -apple-system, sans-serif"
       }}>
         <div style={{
           maxWidth: 1000,
           margin: '0 auto'
         }}>
-          {/* Header with Logo */}
-          <div style={{
-            textAlign: 'center',
-            marginBottom: 40
+          {/* Header with Logo and Back Button - Responsive */}
+          <div className="job-detail-header" style={{
+            display: 'flex',
+            flexDirection: isJobMobile ? 'column' : 'row',
+            justifyContent: isJobMobile ? 'center' : 'space-between',
+            alignItems: 'center',
+            gap: isJobMobile ? 16 : 0,
+            marginBottom: isJobMobile ? 20 : 32
           }}>
-            <img
-              src="https://framerusercontent.com/images/pFpeWgK03UT38AQl5d988Epcsc.svg?scale-down-to=512"
-              alt="AI Planet Logo"
+            {/* Logo first on mobile */}
+            {isJobMobile && (
+              <img
+                src="https://framerusercontent.com/images/pFpeWgK03UT38AQl5d988Epcsc.svg?scale-down-to=512"
+                alt="AI Planet Logo"
+                className="job-detail-logo"
+                style={{
+                  width: 140,
+                  objectFit: 'contain'
+                }}
+              />
+            )}
+            <button
+              onClick={() => window.location.href = '/careers'}
               style={{
-                width: 250,
-                marginBottom: 16,
-                objectFit: 'contain'
+                padding: isJobMobile ? '12px 16px' : '10px 20px',
+                background: 'white',
+                color: '#475569',
+                border: '1px solid #e2e8f0',
+                borderRadius: 10,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                transition: 'all 0.2s',
+                width: isJobMobile ? '100%' : 'auto',
+                minHeight: 44
               }}
-            />
+              onMouseEnter={e => {
+                if (!isJobMobile) {
+                  e.currentTarget.style.background = '#f8fafc';
+                  e.currentTarget.style.borderColor = '#10b981';
+                  e.currentTarget.style.color = '#10b981';
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isJobMobile) {
+                  e.currentTarget.style.background = 'white';
+                  e.currentTarget.style.borderColor = '#e2e8f0';
+                  e.currentTarget.style.color = '#475569';
+                }
+              }}
+            >
+              ← Back to Careers
+            </button>
+            {!isJobMobile && (
+              <img
+                src="https://framerusercontent.com/images/pFpeWgK03UT38AQl5d988Epcsc.svg?scale-down-to=512"
+                alt="AI Planet Logo"
+                className="job-detail-logo"
+                style={{
+                  width: isJobTablet ? 150 : 180,
+                  objectFit: 'contain'
+                }}
+              />
+            )}
+            {!isJobMobile && <div style={{ width: 140 }}></div>} {/* Spacer for centering logo */}
           </div>
 
           {/* Main Content */}
           <div style={{
             background: 'white',
-            borderRadius: 20,
+            borderRadius: isJobMobile ? 16 : 20,
             boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
             overflow: 'hidden'
           }}>
-            {/* Job Header */}
-            <div style={{
+            {/* Job Header - Responsive */}
+            <div className="job-header-bar" style={{
               background: 'linear-gradient(135deg, #44924c, #2d6a33)',
-              padding: '40px 48px',
+              padding: isJobMobile ? '24px 16px' : isJobTablet ? '32px 24px' : '40px 48px',
               color: 'white'
             }}>
               <h1 style={{
-                fontSize: 36,
+                fontSize: isJobMobile ? 22 : isJobTablet ? 28 : 36,
                 fontWeight: 700,
-                margin: '0 0 16px 0',
+                margin: '0 0 12px 0',
                 lineHeight: 1.2
               }}>
                 {job.name}
               </h1>
-              <div style={{
+              <div className="job-meta-tags" style={{
                 display: 'flex',
                 flexWrap: 'wrap',
-                gap: 16,
-                fontSize: 16,
+                gap: isJobMobile ? 10 : 16,
+                fontSize: isJobMobile ? 13 : 16,
                 opacity: 0.95
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>🏢</span>
                   <span>{job.team}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>📍</span>
                   <span>{job.place}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>💼</span>
                   <span>{job.roleType}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>🏠</span>
                   <span>{job.workSetup}</span>
                 </div>
               </div>
             </div>
 
-            {/* Job Details */}
-            <div style={{ padding: '48px' }}>
+            {/* Job Details - Responsive */}
+            <div className="job-detail-content" style={{ padding: isJobMobile ? '20px 16px' : isJobTablet ? '32px 24px' : '48px' }}>
               {/* About Company */}
               {job.aboutCompany && (
                 <div style={{ marginBottom: 40 }}>
@@ -5161,6 +7246,9 @@ export default function App() {
   if (view === 'apply') {
     const job = openings.find(j => j.id === applicationForm.jobId);
 
+    // Responsive for success screen
+    const isSuccessMobile = window.innerWidth < 640;
+
     // Show success screen if application was submitted
     if (showApplicationSuccess && submittedApplicationData) {
       return (
@@ -5170,46 +7258,46 @@ export default function App() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: 20,
+          padding: isSuccessMobile ? 12 : 20,
           fontFamily: "'Work Sans', system-ui, -apple-system, sans-serif"
         }}>
-          <div style={{
+          <div className="success-modal" style={{
             background: 'white',
-            borderRadius: 20,
+            borderRadius: isSuccessMobile ? 16 : 20,
             maxWidth: 600,
             width: '100%',
             boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
             overflow: 'hidden'
           }}>
-            {/* Success Header */}
-            <div style={{
-              padding: '40px 32px',
+            {/* Success Header - Responsive */}
+            <div className="success-modal-header" style={{
+              padding: isSuccessMobile ? '28px 20px' : '40px 32px',
               background: 'linear-gradient(135deg, #44924c, #2d6a33)',
               textAlign: 'center',
               color: 'white'
             }}>
               <div style={{
-                width: 80,
-                height: 80,
+                width: isSuccessMobile ? 60 : 80,
+                height: isSuccessMobile ? 60 : 80,
                 background: 'white',
                 borderRadius: '50%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                margin: '0 auto 20px',
-                fontSize: 40
+                margin: '0 auto 16px',
+                fontSize: isSuccessMobile ? 28 : 40
               }}>
                 ✅
               </div>
               <h2 style={{
-                fontSize: 28,
+                fontSize: isSuccessMobile ? 20 : 28,
                 fontWeight: 700,
-                margin: '0 0 12px'
+                margin: '0 0 8px'
               }}>
-                Application Submitted Successfully!
+                Application Submitted!
               </h2>
               <p style={{
-                fontSize: 16,
+                fontSize: isSuccessMobile ? 14 : 16,
                 margin: 0,
                 opacity: 0.95
               }}>
@@ -5217,8 +7305,8 @@ export default function App() {
               </p>
             </div>
 
-            {/* Success Content */}
-            <div style={{ padding: 32 }}>
+            {/* Success Content - Responsive */}
+            <div className="success-modal-content" style={{ padding: isSuccessMobile ? 20 : 32 }}>
               {/* Application Reference Number */}
               {submittedApplicationData.referenceNumber && (
                 <div style={{
@@ -5375,14 +7463,18 @@ export default function App() {
       );
     }
 
+    // Responsive breakpoints for form
+    const isFormMobile = window.innerWidth < 640;
+    const isFormTablet = window.innerWidth >= 640 && window.innerWidth < 1024;
+
     return (
       <div style={{
         minHeight: '100vh',
         background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%)',
-        padding: '40px 20px',
+        padding: isFormMobile ? '20px 12px' : isFormTablet ? '30px 20px' : '40px 20px',
         fontFamily: "'Work Sans', system-ui, -apple-system, sans-serif"
       }}>
-        <div style={{ maxWidth: 800, margin: '0 auto' }}>
+        <div className="application-form-container" style={{ maxWidth: 800, margin: '0 auto' }}>
           {/* Back Button */}
           <button
             onClick={() => {
@@ -5390,8 +7482,8 @@ export default function App() {
               navigate(`/apply/${job.id}`);
             }}
             style={{
-              marginBottom: 24,
-              padding: '10px 20px',
+              marginBottom: isFormMobile ? 16 : 24,
+              padding: isFormMobile ? '12px 16px' : '10px 20px',
               background: 'white',
               color: '#64748b',
               border: '2px solid #e2e8f0',
@@ -5401,79 +7493,82 @@ export default function App() {
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8
+              justifyContent: 'center',
+              gap: 8,
+              width: isFormMobile ? '100%' : 'auto',
+              minHeight: 44
             }}
           >
             ← Back to Job Details
           </button>
 
-          {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          {/* Header - Responsive */}
+          <div style={{ textAlign: 'center', marginBottom: isFormMobile ? 24 : 40 }}>
             <img
               src="https://framerusercontent.com/images/pFpeWgK03UT38AQl5d988Epcsc.svg?scale-down-to=512"
               alt="AI Planet Logo"
               style={{
-                width: 250,
+                width: isFormMobile ? 160 : 250,
                 marginBottom: 16,
                 objectFit: 'contain'
               }}
             />
-            <h1 style={{ fontSize: 32, fontWeight: 700, color: '#1e293b', margin: '0 0 8px' }}>
+            <h1 style={{ fontSize: isFormMobile ? 22 : 32, fontWeight: 700, color: '#1e293b', margin: '0 0 8px' }}>
               Job Application
             </h1>
-            <p style={{ fontSize: 18, color: '#64748b', margin: 0 }}>
+            <p style={{ fontSize: isFormMobile ? 14 : 18, color: '#64748b', margin: 0 }}>
               Applying for: <strong style={{ color: '#44924c' }}>{job.name}</strong>
             </p>
           </div>
 
-          {/* Job Details Preview */}
+          {/* Job Details Preview - Responsive */}
           <div style={{
             background: 'white',
-            borderRadius: 20,
-            padding: 32,
-            marginBottom: 24,
+            borderRadius: isFormMobile ? 16 : 20,
+            padding: isFormMobile ? 20 : 32,
+            marginBottom: isFormMobile ? 16 : 24,
             boxShadow: '0 10px 40px rgba(0,0,0,0.1)'
           }}>
-            <h2 style={{ fontSize: 24, fontWeight: 700, color: '#1e293b', marginBottom: 16 }}>
+            <h2 style={{ fontSize: isFormMobile ? 18 : 24, fontWeight: 700, color: '#1e293b', marginBottom: 12 }}>
               {job.name}
             </h2>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 20, color: '#64748b', fontSize: 14 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: isFormMobile ? 10 : 16, marginBottom: 16, color: '#64748b', fontSize: isFormMobile ? 13 : 14 }}>
               <span>🏢 {job.team}</span>
               <span>📍 {job.place}</span>
               {job.roleType && <span>💼 {job.roleType}</span>}
               {job.workSetup && <span>🏠 {job.workSetup}</span>}
             </div>
 
-            {job.jobOverview && (
+            {job.jobOverview && !isFormMobile && (
               <div style={{ marginBottom: 16 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 600, color: '#1e293b', marginBottom: 8 }}>Job Overview</h3>
-                <p style={{ color: '#475569', lineHeight: 1.6, margin: 0 }}>{job.jobOverview}</p>
+                <div style={{ color: '#475569', lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: job.jobOverview }} />
               </div>
             )}
 
             {job.salaryMin && job.salaryMax && (
               <div style={{
-                padding: 16,
+                padding: isFormMobile ? 12 : 16,
                 background: '#f0fdf4',
                 borderRadius: 12,
-                marginTop: 16,
+                marginTop: 12,
                 border: '1px solid #bbf7d0'
               }}>
-                <div style={{ fontSize: 14, color: '#166534', fontWeight: 600 }}>
-                  💰 Salary Range: ₹{parseInt(job.salaryMin).toLocaleString('en-IN')} - ₹{parseInt(job.salaryMax).toLocaleString('en-IN')} LPA
+                <div style={{ fontSize: isFormMobile ? 13 : 14, color: '#166534', fontWeight: 600 }}>
+                  💰 Salary: ₹{parseInt(job.salaryMin).toLocaleString('en-IN')} - ₹{parseInt(job.salaryMax).toLocaleString('en-IN')} LPA
                 </div>
               </div>
             )}
           </div>
 
-          {/* Application Form */}
-          <div style={{
+          {/* Application Form - Responsive */}
+          <div className="application-form" style={{
             background: 'white',
-            borderRadius: 20,
-            padding: 40,
+            borderRadius: isFormMobile ? 16 : 20,
+            padding: isFormMobile ? 20 : isFormTablet ? 28 : 40,
             boxShadow: '0 10px 40px rgba(0,0,0,0.1)'
           }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+            <div className="form-grid" style={{ display: 'grid', gridTemplateColumns: isFormMobile ? '1fr' : '1fr 1fr', gap: isFormMobile ? 16 : 24 }}>
               {/* Name */}
               <div>
                 <label style={styles.label}>Full Name *</label>
@@ -5500,15 +7595,42 @@ export default function App() {
               {/* Phone */}
               <div>
                 <label style={styles.label}>Phone Number *</label>
-                <input
-                  type="tel"
-                  value={applicationForm.phone}
-                  onChange={e => setApplicationForm({...applicationForm, phone: e.target.value})}
-                  placeholder="+91 98765 43210"
-                  style={styles.input}
-                  required
-                />
-                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b' }}>Required for application status verification</p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{
+                    padding: '14px 16px',
+                    background: '#f1f5f9',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 10,
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: '#475569',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    +91
+                  </div>
+                  <input
+                    type="tel"
+                    value={applicationForm.phone}
+                    onChange={e => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setApplicationForm({...applicationForm, phone: digits});
+                    }}
+                    placeholder="9876543210"
+                    style={{
+                      ...styles.input,
+                      flex: 1,
+                      borderColor: applicationForm.phone && applicationForm.phone.length !== 10 ? '#f59e0b' : '#e2e8f0'
+                    }}
+                    maxLength={10}
+                    required
+                  />
+                </div>
+                {applicationForm.phone && applicationForm.phone.length !== 10 && (
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#f59e0b' }}>Please enter 10 digit mobile number</p>
+                )}
+                {(!applicationForm.phone || applicationForm.phone.length === 10) && (
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#64748b' }}>Required for application status verification</p>
+                )}
               </div>
 
               {/* Graduation Year */}
@@ -5708,8 +7830,8 @@ export default function App() {
                     pop('Please enter your email');
                     return;
                   }
-                  if (!applicationForm.phone.trim()) {
-                    pop('Please enter your phone number');
+                  if (!applicationForm.phone.trim() || applicationForm.phone.length !== 10) {
+                    pop('Please enter a valid 10-digit phone number');
                     return;
                   }
                   if (!applicationForm.resume) {
@@ -5866,7 +7988,7 @@ export default function App() {
                     {applicationForm.phone && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: '#f8fafc', borderRadius: 8 }}>
                         <span style={{ color: '#64748b', fontSize: 14 }}>Phone:</span>
-                        <span style={{ color: '#1e293b', fontSize: 14, fontWeight: 600 }}>{applicationForm.phone}</span>
+                        <span style={{ color: '#1e293b', fontSize: 14, fontWeight: 600 }}>+91 {applicationForm.phone}</span>
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: '#f8fafc', borderRadius: 8 }}>
@@ -6730,7 +8852,7 @@ export default function App() {
               cursor: 'pointer',
               transition: 'all 0.2s'
             }}
-            onClick={() => navigate('/portal')}
+            onClick={() => window.location.href = '/portal'}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)';
               e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.15)';
@@ -10197,23 +12319,7 @@ export default function App() {
                 {/* Timeline */}
                 <div style={styles.box}>
                   <h3 style={{ fontWeight: 600, color: '#1e293b', margin: '0 0 16px', fontSize: 16 }}>Timeline</h3>
-                  {['Applied', 'AI Screening', 'HR Review', 'Assignment', 'Interview', 'Offer Sent', 'Offer Accepted', 'Hired'].map((step, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <div style={{ 
-                          width: 12, 
-                          height: 12, 
-                          borderRadius: '50%', 
-                          background: i < 3 ? '#10b981' : i === 3 ? '#0ea5e9' : '#e2e8f0' 
-                        }} />
-                        {i < 5 && <div style={{ width: 2, height: 28, background: i < 3 ? '#a7f3d0' : '#e2e8f0' }} />}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 500, color: i <= 3 ? '#1e293b' : '#94a3b8', fontSize: 14 }}>{step}</div>
-                        <div style={{ fontSize: 12, color: '#94a3b8' }}>{i < 3 ? 'Completed' : i === 3 ? 'Current' : 'Pending'}</div>
-                      </div>
-                    </div>
-                  ))}
+                  <SidebarTimeline applicationId={candidate.id} API_BASE={API_BASE} />
                 </div>
 
                 {/* Resume */}
@@ -13342,14 +15448,38 @@ export default function App() {
 
                   {/* Phone */}
                   <div>
-                    <label style={styles.label}>Phone Number</label>
-                    <input
-                      type="tel"
-                      value={candidateForm.phone}
-                      onChange={e => setCandidateForm({...candidateForm, phone: e.target.value})}
-                      placeholder="+1 (555) 123-4567"
-                      style={styles.input}
-                    />
+                    <label style={styles.label}>Phone Number *</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{
+                        padding: '12px 14px',
+                        background: '#f1f5f9',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 10,
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: '#475569'
+                      }}>
+                        +91
+                      </div>
+                      <input
+                        type="tel"
+                        value={candidateForm.phone?.replace(/^\+91/, '') || ''}
+                        onChange={e => {
+                          const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setCandidateForm({...candidateForm, phone: digits});
+                        }}
+                        placeholder="9876543210"
+                        style={{
+                          ...styles.input,
+                          flex: 1,
+                          borderColor: candidateForm.phone && candidateForm.phone.replace(/^\+91/, '').length !== 10 ? '#f59e0b' : '#e2e8f0'
+                        }}
+                        maxLength={10}
+                      />
+                    </div>
+                    {candidateForm.phone && candidateForm.phone.replace(/^\+91/, '').length !== 10 && (
+                      <p style={{ margin: '4px 0 0', fontSize: 11, color: '#f59e0b' }}>Enter 10 digit number</p>
+                    )}
                   </div>
 
                   {/* Graduation Year */}
@@ -13902,240 +16032,280 @@ export default function App() {
             )}
 
             {modal === 'candidateDetails' && selectedCandidate && (
-              <div style={{ display: 'flex', flexDirection: 'column', height: '75vh', overflow: 'hidden' }}>
-                {/* Compact Header with Key Info */}
+              <div style={{ display: 'flex', flexDirection: 'column', height: '80vh', overflow: 'hidden' }}>
+                {/* Light Header Design */}
                 <div style={{
-                  display: 'flex',
-                  gap: 16,
-                  paddingBottom: 16,
-                  borderBottom: '2px solid #f1f5f9',
-                  flexShrink: 0
+                  background: '#fff',
+                  margin: '-28px -28px 0 -28px',
+                  padding: '20px 28px 16px',
+                  borderBottom: '1px solid #e2e8f0'
                 }}>
-                  {/* Left: Avatar + Basic Info */}
-                  <div style={{ display: 'flex', gap: 14, flex: 1 }}>
-                    <div style={{
-                      width: 56,
-                      height: 56,
-                      background: selectedCandidate.isHotApplicant
-                        ? 'linear-gradient(135deg, #f59e0b, #ef4444)'
-                        : 'linear-gradient(135deg, #44924c, #2d6a33)',
-                      borderRadius: 12,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'white',
-                      fontSize: 20,
-                      fontWeight: 700,
-                      flexShrink: 0
-                    }}>
-                      {selectedCandidate.isHotApplicant && <span style={{ position: 'absolute', top: -4, right: -4, fontSize: 14 }}>🔥</span>}
-                      {init(selectedCandidate.name)}
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                    {/* Avatar */}
+                    <div style={{ position: 'relative' }}>
+                      <div style={{
+                        width: 52,
+                        height: 52,
+                        background: selectedCandidate.isHotApplicant
+                          ? 'linear-gradient(135deg, #f59e0b, #ef4444)'
+                          : 'linear-gradient(135deg, #44924c, #22c55e)',
+                        borderRadius: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 18,
+                        fontWeight: 700,
+                        color: 'white'
+                      }}>
+                        {init(selectedCandidate.name)}
+                      </div>
+                      {selectedCandidate.isHotApplicant && (
+                        <span style={{ position: 'absolute', top: -4, right: -4, fontSize: 14 }}>🔥</span>
+                      )}
                     </div>
-                    <div style={{ minWidth: 0 }}>
+
+                    {/* Name & Role */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {selectedCandidate.name}
                         </h2>
                         {selectedCandidate.referenceNumber && (
-                          <span style={{ padding: '2px 6px', background: '#f0fdf4', color: '#16a34a', borderRadius: 4, fontSize: 10, fontFamily: 'monospace', fontWeight: 600 }}>
+                          <span style={{ padding: '2px 6px', background: '#f1f5f9', color: '#64748b', borderRadius: 4, fontSize: 10, fontFamily: 'monospace' }}>
                             {selectedCandidate.referenceNumber}
                           </span>
                         )}
                       </div>
-                      <p style={{ color: '#64748b', margin: '0 0 6px', fontSize: 13 }}>{selectedCandidate.role}</p>
-                      <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#64748b', flexWrap: 'wrap' }}>
-                        <span>📧 {selectedCandidate.email}</span>
-                        {selectedCandidate.phone && <span>📞 {selectedCandidate.phone}</span>}
-                        {selectedCandidate.location && <span>📍 {selectedCandidate.location}</span>}
+                      <div style={{ fontSize: 13, color: '#64748b' }}>{selectedCandidate.role}</div>
+                    </div>
+
+                    {/* Quick Stats Row */}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {/* AI Score */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 12px',
+                        background: selectedCandidate.aiScore >= 80 ? '#f0fdf4' : '#fef9c3',
+                        borderRadius: 8,
+                        border: `1px solid ${selectedCandidate.aiScore >= 80 ? '#86efac' : '#fde68a'}`
+                      }}>
+                        <span style={{ fontSize: 18, fontWeight: 800, color: selectedCandidate.aiScore >= 80 ? '#16a34a' : '#d97706' }}>
+                          {selectedCandidate.aiScore || '—'}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase' }}>Score</span>
+                      </div>
+                      {/* Stage Pill */}
+                      <div style={{
+                        padding: '6px 12px',
+                        background: (stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b') + '15',
+                        borderRadius: 8,
+                        border: `1px solid ${(stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b')}30`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}>
+                        <span style={{ fontSize: 14 }}>{stages.find(s => s.id === selectedCandidate.stage)?.icon}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b' }}>
+                          {stages.find(s => s.id === selectedCandidate.stage)?.name}
+                        </span>
+                      </div>
+                      {/* Days */}
+                      <div style={{
+                        padding: '6px 12px',
+                        background: '#f8fafc',
+                        borderRadius: 8,
+                        border: '1px solid #e2e8f0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4
+                      }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{selectedCandidate.daysInStage || 0}</span>
+                        <span style={{ fontSize: 10, color: '#64748b' }}>days</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Right: Key Stats & Score */}
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexShrink: 0 }}>
-                    {/* AI Score */}
-                    <div style={{
-                      textAlign: 'center',
-                      padding: '8px 16px',
-                      background: 'linear-gradient(135deg, #f0f9ff, #faf5ff)',
-                      borderRadius: 10,
-                      border: '1px solid #e0e7ff'
-                    }}>
-                      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>AI Score</div>
-                      <div style={{
-                        fontSize: 24,
-                        fontWeight: 700,
-                        color: selectedCandidate.aiScore >= 90 ? '#10b981' : selectedCandidate.aiScore >= 80 ? '#0ea5e9' : '#f59e0b'
-                      }}>
-                        {selectedCandidate.aiScore || '—'}
-                      </div>
-                    </div>
-                    {/* Stage */}
-                    <div style={{
-                      textAlign: 'center',
-                      padding: '8px 16px',
-                      background: (stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b') + '15',
-                      borderRadius: 10,
-                      border: `1px solid ${(stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b')}40`
-                    }}>
-                      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>Stage</div>
-                      <div style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b'
-                      }}>
-                        {stages.find(s => s.id === selectedCandidate.stage)?.icon} {stages.find(s => s.id === selectedCandidate.stage)?.name}
-                      </div>
-                    </div>
-                    {/* Days */}
-                    <div style={{
-                      textAlign: 'center',
-                      padding: '8px 16px',
-                      background: '#f8fafc',
-                      borderRadius: 10,
-                      border: '1px solid #e2e8f0'
-                    }}>
-                      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>In Stage</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: '#1e293b' }}>
-                        {selectedCandidate.daysInStage || 0}d
-                      </div>
-                    </div>
+                  {/* Contact Row */}
+                  <div style={{ display: 'flex', gap: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9', fontSize: 12, color: '#64748b' }}>
+                    <span>{selectedCandidate.email}</span>
+                    {selectedCandidate.phone && <span style={{ color: '#cbd5e1' }}>•</span>}
+                    {selectedCandidate.phone && <span>{selectedCandidate.phone}</span>}
+                    {selectedCandidate.location && <span style={{ color: '#cbd5e1' }}>•</span>}
+                    {selectedCandidate.location && <span>{selectedCandidate.location}</span>}
                   </div>
                 </div>
 
-                {/* Tab Navigation */}
+                {/* Tab Navigation - Minimal */}
                 <div style={{
                   display: 'flex',
-                  gap: 4,
-                  padding: '12px 0',
+                  gap: 0,
                   borderBottom: '1px solid #e2e8f0',
-                  flexShrink: 0
+                  flexShrink: 0,
+                  background: '#fff',
+                  margin: '0 -28px',
+                  padding: '0 28px'
                 }}>
                   {[
-                    { id: 'overview', label: 'Overview', icon: '📋' },
-                    { id: 'journey', label: 'Journey', icon: '🛤️' },
-                    { id: 'comments', label: `Comments ${selectedCandidate.comments?.length ? `(${selectedCandidate.comments.length})` : ''}`, icon: '💬' },
-                    { id: 'actions', label: 'Actions', icon: '⚡' }
+                    { id: 'overview', label: 'Profile' },
+                    { id: 'journey', label: 'Timeline' },
+                    { id: 'comments', label: `Notes ${selectedCandidate.comments?.length ? `(${selectedCandidate.comments.length})` : ''}` },
+                    { id: 'actions', label: 'Actions' }
                   ].map(tab => (
                     <button
                       key={tab.id}
                       onClick={() => setCandidateDetailTab(tab.id)}
                       style={{
-                        padding: '8px 16px',
-                        background: candidateDetailTab === tab.id ? '#44924c' : 'transparent',
-                        color: candidateDetailTab === tab.id ? 'white' : '#64748b',
+                        padding: '12px 20px',
+                        background: 'transparent',
+                        color: candidateDetailTab === tab.id ? '#44924c' : '#64748b',
                         border: 'none',
-                        borderRadius: 8,
+                        borderBottom: candidateDetailTab === tab.id ? '2px solid #44924c' : '2px solid transparent',
                         fontSize: 13,
-                        fontWeight: 600,
+                        fontWeight: candidateDetailTab === tab.id ? 700 : 500,
                         cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
                         transition: 'all 0.2s'
                       }}
                     >
-                      {tab.icon} {tab.label}
+                      {tab.label}
                     </button>
                   ))}
                 </div>
 
-                {/* Tab Content - Scrollable */}
-                <div style={{ flex: 1, overflow: 'auto', paddingTop: 16 }}>
-                  {/* Overview Tab */}
+                {/* Tab Content - Scrollable with better spacing */}
+                <div style={{ flex: 1, overflow: 'auto', paddingTop: 20, margin: '0 -28px', padding: '20px 28px' }}>
+                  {/* Overview Tab - Redesigned with better organization */}
                   {candidateDetailTab === 'overview' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                      {/* Left Column */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
+                      {/* Left Column - Main Info */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        {/* AI Analysis */}
+                        {/* AI Analysis - More prominent */}
+                        {/* AI Analysis Card - Enhanced Design */}
                         <div style={{
-                          background: 'linear-gradient(135deg, #f0f9ff, #faf5ff)',
-                          padding: 16,
-                          borderRadius: 12,
-                          border: '1px solid #e0e7ff'
+                          background: 'linear-gradient(135deg, #667eea15 0%, #764ba215 100%)',
+                          padding: 20,
+                          borderRadius: 14,
+                          border: '1px solid #c7d2fe'
                         }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                            <span style={{ fontSize: 18 }}>🤖</span>
-                            <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 14 }}>AI Analysis</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                            <div style={{
+                              width: 36,
+                              height: 36,
+                              background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                              borderRadius: 10,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 18
+                            }}>
+                              🤖
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 700, color: '#1e293b', fontSize: 14 }}>AI Candidate Analysis</div>
+                              <div style={{ fontSize: 11, color: '#64748b' }}>Powered by intelligent matching</div>
+                            </div>
                             <button
                               onClick={() => runAIScore(selectedCandidate)}
                               disabled={isRunningAIScore}
                               style={{
-                                marginLeft: 'auto',
-                                padding: '6px 12px',
+                                padding: '8px 14px',
                                 background: isRunningAIScore ? '#94a3b8' : 'linear-gradient(135deg, #8b5cf6, #6366f1)',
                                 color: 'white',
                                 border: 'none',
-                                borderRadius: 6,
-                                fontSize: 11,
+                                borderRadius: 8,
+                                fontSize: 12,
                                 fontWeight: 600,
-                                cursor: isRunningAIScore ? 'wait' : 'pointer'
+                                cursor: isRunningAIScore ? 'wait' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)'
                               }}
                             >
                               {isRunningAIScore ? '⏳ Analyzing...' : '✨ Re-score'}
                             </button>
                           </div>
-                          <p style={{ color: '#475569', lineHeight: 1.5, margin: 0, fontSize: 13 }}>
-                            {selectedCandidate.aiReason || 'No AI analysis available. Click Re-score to analyze.'}
-                          </p>
+                          <div style={{
+                            background: 'white',
+                            padding: 14,
+                            borderRadius: 10,
+                            border: '1px solid #e0e7ff'
+                          }}>
+                            <p style={{ color: '#475569', lineHeight: 1.6, margin: 0, fontSize: 13 }}>
+                              {selectedCandidate.aiReason || 'No AI analysis available yet. Click "Re-score" to generate an intelligent analysis of this candidate.'}
+                            </p>
+                          </div>
                         </div>
 
-                        {/* Application Details */}
-                        <div style={{ ...styles.box, padding: 16 }}>
-                          <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Application Details
+                        {/* Application Details - Card Grid */}
+                        <div style={{
+                          background: 'white',
+                          padding: 20,
+                          borderRadius: 14,
+                          border: '1px solid #e2e8f0',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                        }}>
+                          <h4 style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 16 }}>📋</span> Application Details
                           </h4>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                            <div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Applied</div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.appliedDate}</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                            <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                              <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Applied</div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.appliedDate}</div>
                             </div>
-                            {selectedCandidate.graduationYear && (
-                              <div>
-                                <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Graduation</div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.graduationYear}</div>
-                              </div>
-                            )}
-                            <div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Availability</div>
+                            <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                              <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Availability</div>
                               <span style={{
-                                padding: '3px 8px',
-                                background: selectedCandidate.availability === 'immediately' ? '#f0fdf4' : '#fef3c7',
+                                display: 'inline-block',
+                                padding: '4px 10px',
+                                background: selectedCandidate.availability === 'immediately' ? '#dcfce7' : '#fef3c7',
                                 color: selectedCandidate.availability === 'immediately' ? '#16a34a' : '#d97706',
-                                borderRadius: 4,
-                                fontSize: 11,
+                                borderRadius: 6,
+                                fontSize: 12,
                                 fontWeight: 600
                               }}>
-                                {selectedCandidate.availability === 'immediately' ? 'Immediate' : selectedCandidate.noticePeriod || 'Notice Period'}
+                                {selectedCandidate.availability === 'immediately' ? 'Immediate' : selectedCandidate.noticePeriod || 'Notice Required'}
                               </span>
                             </div>
+                            <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                              <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Days in Pipeline</div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.totalDays || 0} days</div>
+                            </div>
+                            {selectedCandidate.graduationYear && (
+                              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Graduation</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.graduationYear}</div>
+                              </div>
+                            )}
                             {selectedCandidate.referralSource && (
-                              <div>
-                                <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Source</div>
-                                <span style={{ padding: '3px 8px', background: '#eff6ff', color: '#2563eb', borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
+                              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Source</div>
+                                <span style={{ display: 'inline-block', padding: '4px 10px', background: '#dbeafe', color: '#1d4ed8', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
                                   {selectedCandidate.referralSource}
                                 </span>
                               </div>
                             )}
-                            <div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Profile</div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.profileStrength || 'Good'}</div>
-                            </div>
-                            <div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>Total Days</div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.totalDays || 0} days</div>
+                            <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10 }}>
+                              <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Profile Strength</div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.profileStrength || 'Good'}</div>
                             </div>
                           </div>
                         </div>
 
-                        {/* Motivation */}
+                        {/* Motivation - Enhanced */}
                         {selectedCandidate.motivation && (
-                          <div style={{ ...styles.box, padding: 16 }}>
-                            <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                              Why They Want to Join
+                          <div style={{
+                            background: 'linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%)',
+                            padding: 20,
+                            borderRadius: 14,
+                            border: '1px solid #fde68a'
+                          }}>
+                            <h4 style={{ fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 16 }}>💡</span> Why They Want to Join
                             </h4>
-                            <p style={{ fontSize: 13, color: '#475569', lineHeight: 1.5, margin: 0 }}>
-                              {selectedCandidate.motivation}
+                            <p style={{ fontSize: 13, color: '#78350f', lineHeight: 1.6, margin: 0, fontStyle: 'italic' }}>
+                              "{selectedCandidate.motivation}"
                             </p>
                           </div>
                         )}
@@ -14143,12 +16313,18 @@ export default function App() {
 
                       {/* Right Column */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        {/* Documents & Links */}
-                        <div style={{ ...styles.box, padding: 16 }}>
-                          <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Documents & Links
+                        {/* Documents & Links - Redesigned */}
+                        <div style={{
+                          background: 'white',
+                          padding: 20,
+                          borderRadius: 14,
+                          border: '1px solid #e2e8f0',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                        }}>
+                          <h4 style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 16 }}>📎</span> Documents & Links
                           </h4>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             {(selectedCandidate.resumeUrl || selectedCandidate.resume) && (
                               <button
                                 onClick={async (e) => {
@@ -14159,15 +16335,12 @@ export default function App() {
                                   }
                                   try {
                                     pop('Loading resume...');
-                                    // Extract the S3 key from the full URL
                                     const resumeUrl = selectedCandidate.resumeUrl;
                                     let key = resumeUrl;
                                     try {
                                       const urlObj = new URL(resumeUrl);
                                       key = urlObj.pathname.startsWith('/') ? urlObj.pathname.substring(1) : urlObj.pathname;
-                                    } catch (e) {
-                                      // If not a valid URL, use as-is (might already be a key)
-                                    }
+                                    } catch (e) {}
                                     const signedUrl = await uploadAPI.getSignedUrl(key);
                                     window.open(signedUrl, '_blank');
                                   } catch (error) {
@@ -14176,20 +16349,27 @@ export default function App() {
                                   }
                                 }}
                                 style={{
-                                  padding: '8px 14px',
-                                  background: '#f0fdf4',
+                                  padding: '14px 16px',
+                                  background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
                                   color: '#16a34a',
-                                  border: '1px solid #bbf7d0',
-                                  borderRadius: 8,
-                                  fontSize: 12,
+                                  border: '1px solid #86efac',
+                                  borderRadius: 10,
+                                  fontSize: 13,
                                   fontWeight: 600,
                                   cursor: 'pointer',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: 6
+                                  gap: 10,
+                                  width: '100%',
+                                  textAlign: 'left'
                                 }}
                               >
-                                📄 Resume
+                                <span style={{ fontSize: 20 }}>📄</span>
+                                <div>
+                                  <div>View Resume</div>
+                                  <div style={{ fontSize: 11, color: '#22c55e', fontWeight: 400 }}>Click to open in new tab</div>
+                                </div>
+                                <span style={{ marginLeft: 'auto', fontSize: 14 }}>↗</span>
                               </button>
                             )}
                             {selectedCandidate.linkedIn && (
@@ -14198,20 +16378,25 @@ export default function App() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 style={{
-                                  padding: '8px 14px',
-                                  background: '#eff6ff',
-                                  color: '#2563eb',
-                                  border: '1px solid #bfdbfe',
-                                  borderRadius: 8,
-                                  fontSize: 12,
+                                  padding: '14px 16px',
+                                  background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                                  color: '#1d4ed8',
+                                  border: '1px solid #93c5fd',
+                                  borderRadius: 10,
+                                  fontSize: 13,
                                   fontWeight: 600,
                                   textDecoration: 'none',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: 6
+                                  gap: 10
                                 }}
                               >
-                                🔗 LinkedIn
+                                <span style={{ fontSize: 20 }}>🔗</span>
+                                <div>
+                                  <div>LinkedIn Profile</div>
+                                  <div style={{ fontSize: 11, color: '#3b82f6', fontWeight: 400 }}>View professional profile</div>
+                                </div>
+                                <span style={{ marginLeft: 'auto', fontSize: 14 }}>↗</span>
                               </a>
                             )}
                             {selectedCandidate.portfolio && (
@@ -14220,24 +16405,186 @@ export default function App() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 style={{
-                                  padding: '8px 14px',
-                                  background: '#faf5ff',
+                                  padding: '14px 16px',
+                                  background: 'linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)',
                                   color: '#7c3aed',
-                                  border: '1px solid #e9d5ff',
-                                  borderRadius: 8,
-                                  fontSize: 12,
+                                  border: '1px solid #d8b4fe',
+                                  borderRadius: 10,
+                                  fontSize: 13,
                                   fontWeight: 600,
                                   textDecoration: 'none',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: 6
+                                  gap: 10
                                 }}
                               >
-                                🌐 Portfolio
+                                <span style={{ fontSize: 20 }}>🌐</span>
+                                <div>
+                                  <div>Portfolio Website</div>
+                                  <div style={{ fontSize: 11, color: '#a855f7', fontWeight: 400 }}>View work samples</div>
+                                </div>
+                                <span style={{ marginLeft: 'auto', fontSize: 14 }}>↗</span>
                               </a>
                             )}
                           </div>
                         </div>
+
+                        {/* Assignment Submission - Shows only when candidate has submitted */}
+                        {candidateAssignments.length > 0 && candidateAssignments[0].status === 'submitted' && (candidateAssignments[0].submissionLinks?.length > 0 || candidateAssignments[0].submissionLink || candidateAssignments[0].submissionFiles?.length > 0) && (
+                          <div style={{
+                            ...styles.box,
+                            padding: 0,
+                            overflow: 'hidden',
+                            border: '2px solid #a7f3d0',
+                            background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)'
+                          }}>
+                            {/* Header */}
+                            <div style={{
+                              padding: '14px 16px',
+                              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{
+                                  width: 32,
+                                  height: 32,
+                                  background: 'rgba(255,255,255,0.2)',
+                                  borderRadius: 8,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: 16
+                                }}>
+                                  ✅
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: 'white' }}>Assignment Submitted</div>
+                                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)' }}>
+                                    {new Date(candidateAssignments[0].submissionDate).toLocaleDateString()} at {new Date(candidateAssignments[0].submissionDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Content */}
+                            <div style={{ padding: 16 }}>
+                              {/* Assignment Name */}
+                              <div style={{ fontSize: 12, color: '#065f46', fontWeight: 600, marginBottom: 12 }}>
+                                {candidateAssignments[0].assignmentName}
+                              </div>
+
+                              {/* Submission Links */}
+                              {(candidateAssignments[0].submissionLinks?.length > 0 || candidateAssignments[0].submissionLink) && (
+                                <div style={{ marginBottom: 12 }}>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 500 }}>SUBMITTED LINKS</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {(candidateAssignments[0].submissionLinks?.length > 0
+                                      ? candidateAssignments[0].submissionLinks
+                                      : [candidateAssignments[0].submissionLink]
+                                    ).filter(Boolean).map((link, idx) => (
+                                      <a
+                                        key={idx}
+                                        href={link}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                          padding: '10px 12px',
+                                          background: 'white',
+                                          borderRadius: 8,
+                                          border: '1px solid #d1fae5',
+                                          textDecoration: 'none',
+                                          fontSize: 12,
+                                          color: '#059669',
+                                          fontWeight: 500,
+                                          transition: 'all 0.15s'
+                                        }}
+                                      >
+                                        <span style={{ fontSize: 14 }}>🔗</span>
+                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {link.length > 40 ? link.substring(0, 40) + '...' : link}
+                                        </span>
+                                        <span style={{ fontSize: 10, color: '#94a3b8' }}>↗</span>
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Submission Files */}
+                              {candidateAssignments[0].submissionFiles?.length > 0 && (
+                                <div style={{ marginBottom: 12 }}>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 500 }}>UPLOADED FILES</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {candidateAssignments[0].submissionFiles.map((file, idx) => (
+                                      <button
+                                        key={idx}
+                                        onClick={async () => {
+                                          try {
+                                            pop('Loading file...');
+                                            let key = file.url;
+                                            try {
+                                              const urlObj = new URL(file.url);
+                                              key = urlObj.pathname.startsWith('/') ? urlObj.pathname.substring(1) : urlObj.pathname;
+                                            } catch (e) {}
+                                            const signedUrl = await uploadAPI.getSignedUrl(key);
+                                            window.open(signedUrl, '_blank');
+                                          } catch (error) {
+                                            console.error('Error getting file URL:', error);
+                                            pop('Failed to load file');
+                                          }
+                                        }}
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                          cursor: 'pointer',
+                                          padding: '10px 12px',
+                                          background: 'white',
+                                          borderRadius: 8,
+                                          border: '1px solid #e2e8f0',
+                                          textDecoration: 'none',
+                                          fontSize: 12,
+                                          color: '#1e293b',
+                                          fontWeight: 500
+                                        }}
+                                      >
+                                        <span style={{ fontSize: 14 }}>📄</span>
+                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                          {file.name}
+                                        </span>
+                                        <span style={{ fontSize: 10, color: '#94a3b8' }}>↗</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Submission Notes */}
+                              {candidateAssignments[0].submissionNotes && (
+                                <div>
+                                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, fontWeight: 500 }}>CANDIDATE'S NOTES</div>
+                                  <div style={{
+                                    padding: '10px 12px',
+                                    background: 'white',
+                                    borderRadius: 8,
+                                    border: '1px solid #e2e8f0',
+                                    fontSize: 12,
+                                    color: '#475569',
+                                    lineHeight: 1.5,
+                                    whiteSpace: 'pre-wrap'
+                                  }}>
+                                    {candidateAssignments[0].submissionNotes}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Skills */}
                         {selectedCandidate.tags && selectedCandidate.tags.length > 0 && (
@@ -14257,34 +16604,19 @@ export default function App() {
 
                         {/* Quick Actions */}
                         <div style={{ ...styles.box, padding: 16 }}>
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleHotApplicant(selectedCandidate.id);
-                                setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant});
-                              }}
-                              style={{
-                                flex: 1,
-                                padding: '10px',
-                                background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef3c7',
-                                color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706',
-                                border: 'none',
-                                borderRadius: 8,
-                                fontSize: 12,
-                                fontWeight: 600,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              {selectedCandidate.isHotApplicant ? '❄️ Remove Hot' : '🔥 Mark Hot'}
-                            </button>
-                            {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div style={{ display: 'flex', gap: 8 }}>
                               <button
-                                onClick={() => setShowRejectConfirm(true)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleHotApplicant(selectedCandidate.id);
+                                  setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant});
+                                }}
                                 style={{
-                                  padding: '10px 16px',
-                                  background: '#fef2f2',
-                                  color: '#ef4444',
+                                  flex: 1,
+                                  padding: '10px',
+                                  background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef3c7',
+                                  color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706',
                                   border: 'none',
                                   borderRadius: 8,
                                   fontSize: 12,
@@ -14292,25 +16624,67 @@ export default function App() {
                                   cursor: 'pointer'
                                 }}
                               >
-                                ❌ Reject
+                                {selectedCandidate.isHotApplicant ? '❄️ Remove Hot' : '🔥 Mark Hot'}
                               </button>
-                            )}
-                            {selectedCandidate.stage === 'hired' && (
-                              <div style={{
-                                padding: '10px 16px',
-                                background: 'linear-gradient(135deg, #10b981, #059669)',
-                                color: 'white',
-                                border: 'none',
+                              {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
+                                <button
+                                  onClick={() => setShowRejectConfirm(true)}
+                                  style={{
+                                    padding: '10px 16px',
+                                    background: '#fef2f2',
+                                    color: '#ef4444',
+                                    border: 'none',
+                                    borderRadius: 8,
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  ❌ Reject
+                                </button>
+                              )}
+                              {selectedCandidate.stage === 'hired' && (
+                                <div style={{
+                                  padding: '10px 16px',
+                                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6
+                                }}>
+                                  ✅ Hired
+                                </div>
+                              )}
+                            </div>
+                            {/* Add to Talent Pool Button */}
+                            <button
+                              onClick={() => {
+                                setTalentPoolForm({ reason: '', tags: [], notes: '' });
+                                setTalentPoolTagInput('');
+                                setShowTalentPoolModal(true);
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '10px',
+                                background: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)',
+                                color: '#0369a1',
+                                border: '1px solid #7dd3fc',
                                 borderRadius: 8,
                                 fontSize: 12,
                                 fontWeight: 600,
+                                cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
+                                justifyContent: 'center',
                                 gap: 6
-                              }}>
-                                ✅ Hired
-                              </div>
-                            )}
+                              }}
+                            >
+                              💎 Add to Talent Pool
+                            </button>
                           </div>
                         </div>
 
@@ -14360,165 +16734,424 @@ export default function App() {
                   {/* Comments Tab */}
                   {candidateDetailTab === 'comments' && (
                     <div>
-                      {/* Add Comment */}
-                      <div style={{ marginBottom: 16, background: '#f8fafc', padding: 16, borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                      {/* Add Comment with Attachments */}
+                      <div style={{ marginBottom: 16, background: '#f8fafc', padding: 16, borderRadius: 12, border: '1px solid #e2e8f0' }}>
                         <textarea
                           value={commentText}
                           onChange={(e) => setCommentText(e.target.value)}
-                          placeholder="Add a comment or feedback..."
-                          style={{ ...styles.input, minHeight: 60, resize: 'vertical', fontFamily: 'inherit', width: '100%', fontSize: 13 }}
+                          placeholder="Add a note, feedback, or observation..."
+                          style={{ ...styles.input, minHeight: 70, resize: 'vertical', fontFamily: 'inherit', width: '100%', fontSize: 13, borderRadius: 10 }}
                         />
-                        <button
-                          onClick={async () => {
-                            if (!commentText.trim()) { pop('Please enter a comment'); return; }
-                            const newComment = {
-                              id: Date.now(),
-                              text: commentText,
-                              author: currentUser?.name || 'Admin',
-                              timestamp: new Date().toLocaleString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-                              stage: selectedCandidate.stage
-                            };
-                            // Optimistically update UI
-                            setPeople(p => p.map(c => c.id === selectedCandidate.id ? { ...c, comments: [...(c.comments || []), newComment] } : c));
-                            setSelectedCandidate({
-                              ...selectedCandidate,
-                              comments: [...(selectedCandidate.comments || []), newComment]
-                            });
-                            const savedCommentText = commentText;
-                            setCommentText('');
 
-                            // Persist to database
-                            try {
-                              await applicationsAPI.addComment(selectedCandidate.id, {
-                                text: savedCommentText,
+                        {/* Attachment Preview */}
+                        {commentAttachments.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                            {commentAttachments.map((att, idx) => (
+                              <div key={idx} style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '8px 12px',
+                                background: att.type === 'image' ? '#eff6ff' : '#f0fdf4',
+                                border: `1px solid ${att.type === 'image' ? '#bfdbfe' : '#bbf7d0'}`,
+                                borderRadius: 8,
+                                fontSize: 12
+                              }}>
+                                {att.type === 'image' ? (
+                                  <img src={att.url} alt={att.name} style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover' }} />
+                                ) : (
+                                  <span style={{ fontSize: 18 }}>📄</span>
+                                )}
+                                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#475569' }}>
+                                  {att.name}
+                                </span>
+                                <button
+                                  onClick={() => setCommentAttachments(prev => prev.filter((_, i) => i !== idx))}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 2,
+                                    color: '#94a3b8',
+                                    fontSize: 14
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                          {/* Upload Image */}
+                          <label style={{
+                            padding: '8px 14px',
+                            background: '#eff6ff',
+                            color: '#3b82f6',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: isUploadingCommentFile ? 'wait' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}>
+                            <span>🖼️</span> Image
+                            <input
+                              type="file"
+                              accept="image/*"
+                              style={{ display: 'none' }}
+                              disabled={isUploadingCommentFile}
+                              onChange={async (e) => {
+                                const file = e.target.files[0];
+                                if (!file) return;
+                                setIsUploadingCommentFile(true);
+                                try {
+                                  const result = await uploadAPI.uploadFile(file, 'comments');
+                                  setCommentAttachments(prev => [...prev, {
+                                    type: 'image',
+                                    name: file.name,
+                                    url: result.url,
+                                    key: result.key,
+                                    size: file.size
+                                  }]);
+                                  pop('Image uploaded');
+                                } catch (err) {
+                                  console.error('Upload failed:', err);
+                                  pop('Failed to upload image');
+                                }
+                                setIsUploadingCommentFile(false);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {/* Upload Document */}
+                          <label style={{
+                            padding: '8px 14px',
+                            background: '#f0fdf4',
+                            color: '#16a34a',
+                            border: '1px solid #bbf7d0',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: isUploadingCommentFile ? 'wait' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6
+                          }}>
+                            <span>📄</span> Document
+                            <input
+                              type="file"
+                              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
+                              style={{ display: 'none' }}
+                              disabled={isUploadingCommentFile}
+                              onChange={async (e) => {
+                                const file = e.target.files[0];
+                                if (!file) return;
+                                setIsUploadingCommentFile(true);
+                                try {
+                                  const result = await uploadAPI.uploadFile(file, 'comments');
+                                  setCommentAttachments(prev => [...prev, {
+                                    type: 'document',
+                                    name: file.name,
+                                    url: result.url,
+                                    key: result.key,
+                                    size: file.size
+                                  }]);
+                                  pop('Document uploaded');
+                                } catch (err) {
+                                  console.error('Upload failed:', err);
+                                  pop('Failed to upload document');
+                                }
+                                setIsUploadingCommentFile(false);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {isUploadingCommentFile && (
+                            <span style={{ padding: '8px 14px', color: '#64748b', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ width: 14, height: 14, border: '2px solid #e2e8f0', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                              Uploading...
+                            </span>
+                          )}
+
+                          {/* Add Comment Button */}
+                          <button
+                            onClick={async () => {
+                              if (!commentText.trim() && commentAttachments.length === 0) {
+                                pop('Please enter a comment or attach a file');
+                                return;
+                              }
+                              const newComment = {
+                                id: Date.now(),
+                                text: commentText,
                                 author: currentUser?.name || 'Admin',
-                                stage: selectedCandidate.stage
+                                timestamp: new Date().toLocaleString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                                stage: selectedCandidate.stage,
+                                attachments: commentAttachments
+                              };
+                              // Optimistically update UI
+                              setPeople(p => p.map(c => c.id === selectedCandidate.id ? { ...c, comments: [...(c.comments || []), newComment] } : c));
+                              setSelectedCandidate({
+                                ...selectedCandidate,
+                                comments: [...(selectedCandidate.comments || []), newComment]
                               });
-                              pop('💬 Comment added successfully!');
-                            } catch (error) {
-                              console.error('Failed to save comment:', error);
-                              pop('Comment saved locally but failed to sync to database');
-                            }
-                          }}
-                          style={{ ...styles.btn1, marginTop: 8, width: '100%', justifyContent: 'center', padding: '10px' }}
-                        >
-                          💬 Add Comment
-                        </button>
+                              const savedCommentText = commentText;
+                              const savedAttachments = [...commentAttachments];
+                              setCommentText('');
+                              setCommentAttachments([]);
+
+                              // Persist to database
+                              try {
+                                await applicationsAPI.addComment(selectedCandidate.id, {
+                                  text: savedCommentText,
+                                  author: currentUser?.name || 'Admin',
+                                  stage: selectedCandidate.stage,
+                                  attachments: savedAttachments
+                                });
+                                pop('Note added successfully!');
+                              } catch (error) {
+                                console.error('Failed to save comment:', error);
+                                pop('Note saved locally but failed to sync');
+                              }
+                            }}
+                            disabled={isUploadingCommentFile}
+                            style={{
+                              marginLeft: 'auto',
+                              padding: '8px 20px',
+                              background: 'linear-gradient(135deg, #44924c, #22c55e)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: isUploadingCommentFile ? 'wait' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6
+                            }}
+                          >
+                            <span>💬</span> Add Note
+                          </button>
+                        </div>
                       </div>
 
                       {/* Comments List */}
-                      <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ display: 'grid', gap: 12 }}>
                         {selectedCandidate.comments && selectedCandidate.comments.length > 0 ? (
-                          selectedCandidate.comments.map(comment => (
-                            <div key={comment.id} style={{ padding: 14, background: '#ffffff', borderRadius: 10, border: '1px solid #e2e8f0' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #44924c, #2d6a33)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 10, fontWeight: 600 }}>
-                                    {comment.author.split(' ').map(n => n[0]).join('')}
+                          [...selectedCandidate.comments].reverse().map((comment, idx) => (
+                            <div key={comment.id || idx} style={{ padding: 16, background: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg, #44924c, #2d6a33)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 600 }}>
+                                    {(comment.author || 'A').split(' ').map(n => n[0]).join('').substring(0, 2)}
                                   </div>
                                   <div>
                                     <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 13 }}>{comment.author}</div>
-                                    <div style={{ fontSize: 10, color: '#94a3b8' }}>{comment.timestamp}</div>
+                                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                                      {typeof comment.timestamp === 'string' ? comment.timestamp : new Date(comment.timestamp).toLocaleString()}
+                                    </div>
                                   </div>
                                 </div>
-                                <span style={{ padding: '2px 8px', background: (stages.find(s => s.id === comment.stage)?.color || '#64748b') + '20', borderRadius: 4, fontSize: 10, fontWeight: 600, color: stages.find(s => s.id === comment.stage)?.color || '#64748b' }}>
-                                  {stages.find(s => s.id === comment.stage)?.name}
+                                <span style={{ padding: '3px 10px', background: (stages.find(s => s.id === comment.stage)?.color || '#64748b') + '15', borderRadius: 6, fontSize: 10, fontWeight: 600, color: stages.find(s => s.id === comment.stage)?.color || '#64748b' }}>
+                                  {stages.find(s => s.id === comment.stage)?.name || comment.stage}
                                 </span>
                               </div>
-                              <div style={{ fontSize: 13, color: '#475569', lineHeight: 1.5 }}>{comment.text}</div>
+
+                              {/* Comment Text */}
+                              {comment.text && (
+                                <div style={{ fontSize: 13, color: '#475569', lineHeight: 1.6, marginBottom: comment.attachments?.length ? 12 : 0 }}>
+                                  {comment.text}
+                                </div>
+                              )}
+
+                              {/* Attachments */}
+                              {comment.attachments && comment.attachments.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
+                                  {comment.attachments.map((att, attIdx) => (
+                                    att.type === 'image' ? (
+                                      <div
+                                        key={attIdx}
+                                        onClick={async () => {
+                                          try {
+                                            const signedUrl = await uploadAPI.getSignedUrl(att.key || att.url);
+                                            window.open(signedUrl, '_blank');
+                                          } catch (e) {
+                                            window.open(att.url, '_blank');
+                                          }
+                                        }}
+                                        style={{
+                                          cursor: 'pointer',
+                                          borderRadius: 8,
+                                          overflow: 'hidden',
+                                          border: '1px solid #e2e8f0'
+                                        }}
+                                      >
+                                        <img
+                                          src={att.url}
+                                          alt={att.name}
+                                          style={{ maxWidth: 200, maxHeight: 150, display: 'block' }}
+                                          onError={(e) => { e.target.style.display = 'none'; }}
+                                        />
+                                      </div>
+                                    ) : (
+                                      <button
+                                        key={attIdx}
+                                        onClick={async () => {
+                                          try {
+                                            const signedUrl = await uploadAPI.getSignedUrl(att.key || att.url);
+                                            window.open(signedUrl, '_blank');
+                                          } catch (e) {
+                                            pop('Failed to open file');
+                                          }
+                                        }}
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                          padding: '10px 14px',
+                                          background: '#f8fafc',
+                                          border: '1px solid #e2e8f0',
+                                          borderRadius: 8,
+                                          cursor: 'pointer',
+                                          fontSize: 12,
+                                          color: '#475569'
+                                        }}
+                                      >
+                                        <span style={{ fontSize: 18 }}>📄</span>
+                                        <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {att.name}
+                                        </span>
+                                        <span style={{ color: '#94a3b8' }}>↓</span>
+                                      </button>
+                                    )
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (
-                          <div style={{ textAlign: 'center', padding: 32, color: '#94a3b8', fontSize: 13, background: '#f8fafc', borderRadius: 10, border: '2px dashed #e2e8f0' }}>
-                            No comments yet. Be the first to add feedback!
+                          <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8', fontSize: 13, background: '#f8fafc', borderRadius: 12, border: '2px dashed #e2e8f0' }}>
+                            <div style={{ fontSize: 32, marginBottom: 12 }}>📝</div>
+                            No notes yet. Add feedback, observations, or attach documents!
                           </div>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {/* Actions Tab */}
+                  {/* Actions Tab - Redesigned Compact Layout */}
                   {candidateDetailTab === 'actions' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div>
                       {/* Show message for rejected/hired candidates */}
                       {(selectedCandidate.stage === 'rejected' || selectedCandidate.stage === 'hired') ? (
                         <div style={{
-                          gridColumn: '1 / -1',
                           background: selectedCandidate.stage === 'rejected'
                             ? 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)'
                             : 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
                           border: `2px solid ${selectedCandidate.stage === 'rejected' ? '#fca5a5' : '#86efac'}`,
                           borderRadius: 16,
-                          padding: 32,
+                          padding: 24,
                           textAlign: 'center'
                         }}>
-                          <div style={{ fontSize: 48, marginBottom: 16 }}>
+                          <div style={{ fontSize: 36, marginBottom: 12 }}>
                             {selectedCandidate.stage === 'rejected' ? '❌' : '🎉'}
                           </div>
                           <h3 style={{
-                            fontSize: 20,
+                            fontSize: 18,
                             fontWeight: 700,
                             color: selectedCandidate.stage === 'rejected' ? '#dc2626' : '#16a34a',
-                            marginBottom: 8
+                            marginBottom: 6
                           }}>
-                            {selectedCandidate.stage === 'rejected' ? 'Application Closed' : 'Journey Complete!'}
+                            {selectedCandidate.stage === 'rejected' ? 'Application Closed' : 'Successfully Hired!'}
                           </h3>
                           <p style={{
                             color: selectedCandidate.stage === 'rejected' ? '#991b1b' : '#166534',
-                            fontSize: 14,
-                            maxWidth: 400,
-                            margin: '0 auto 16px',
-                            lineHeight: 1.6
+                            fontSize: 13,
+                            margin: '0 0 12px',
+                            lineHeight: 1.5
                           }}>
                             {selectedCandidate.stage === 'rejected'
-                              ? 'This application has been rejected and is no longer active. No further actions can be taken.'
-                              : 'This candidate has been successfully hired! The recruitment journey is complete.'}
+                              ? 'This application is no longer active.'
+                              : 'The recruitment journey is complete.'}
                           </p>
                           {selectedCandidate.stage === 'rejected' && selectedCandidate.rejectionReason && (
                             <div style={{
                               background: 'rgba(255,255,255,0.7)',
-                              padding: 16,
-                              borderRadius: 12,
-                              maxWidth: 400,
-                              margin: '0 auto'
+                              padding: 12,
+                              borderRadius: 10,
+                              textAlign: 'left'
                             }}>
-                              <div style={{ fontSize: 12, color: '#991b1b', fontWeight: 600, marginBottom: 4 }}>
-                                Rejection Reason:
-                              </div>
-                              <div style={{ fontSize: 13, color: '#7f1d1d' }}>
-                                {selectedCandidate.rejectionReason}
-                              </div>
+                              <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 600, marginBottom: 4 }}>Reason:</div>
+                              <div style={{ fontSize: 12, color: '#7f1d1d' }}>{selectedCandidate.rejectionReason}</div>
                             </div>
                           )}
-                          <div style={{
-                            marginTop: 20,
-                            padding: '12px 20px',
-                            background: 'rgba(255,255,255,0.5)',
-                            borderRadius: 10,
-                            display: 'inline-block'
-                          }}>
-                            <span style={{ color: '#64748b', fontSize: 12 }}>
-                              Status: <strong style={{ color: selectedCandidate.stage === 'rejected' ? '#dc2626' : '#16a34a' }}>
-                                {selectedCandidate.stage === 'rejected' ? 'Rejected' : 'Hired'}
-                              </strong>
-                            </span>
-                          </div>
                         </div>
                       ) : (
                       <>
-                      {/* Stage-specific Actions */}
-                      <div style={{ ...styles.box, padding: 16 }}>
-                        <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          Stage Actions
-                        </h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {/* Unified Actions Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: candidateAssignments.length > 0 && !['interview', 'offer-sent', 'offer-accepted', 'hired'].includes(selectedCandidate?.stage) ? '1fr 1fr' : '1fr', gap: 16 }}>
+
+                        {/* Primary Actions Card */}
+                        <div style={{
+                          background: 'white',
+                          borderRadius: 14,
+                          border: '1px solid #e2e8f0',
+                          overflow: 'hidden'
+                        }}>
+                          {/* Header */}
+                          <div style={{
+                            background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                            padding: '12px 16px',
+                            borderBottom: '1px solid #e2e8f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8
+                          }}>
+                            <span style={{ fontSize: 16 }}>⚡</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>Quick Actions</span>
+                            <span style={{
+                              marginLeft: 'auto',
+                              padding: '3px 8px',
+                              background: (stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b') + '20',
+                              color: stages.find(s => s.id === selectedCandidate.stage)?.color || '#64748b',
+                              borderRadius: 6,
+                              fontSize: 10,
+                              fontWeight: 600,
+                              textTransform: 'uppercase'
+                            }}>
+                              {stages.find(s => s.id === selectedCandidate.stage)?.name}
+                            </span>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
                           {selectedCandidate.stage === 'shortlisting' && (
                             <>
                               <button
                                 onClick={() => { setModal('assignTask'); setAssignedTo(null); setCommentText(''); }}
-                                style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}
+                                style={{
+                                  background: 'linear-gradient(135deg, #44924c, #22c55e)',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '12px 16px',
+                                  borderRadius: 10,
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  boxShadow: '0 2px 8px rgba(68, 146, 76, 0.25)'
+                                }}
                               >
-                                ✅ Shortlist Candidate
+                                <span>✅</span> Shortlist Candidate
                               </button>
                               <button
                                 onClick={() => {
@@ -14526,15 +17159,44 @@ export default function App() {
                                   setShowScreeningPreview(false);
                                   setScreeningForm({ date: '', time: '', interviewer: '', interviewerEmail: '', duration: '30', platform: 'Google Meet', meetingLink: '', notes: '', agenda: '' });
                                 }}
-                                style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
+                                style={{
+                                  background: '#f8fafc',
+                                  color: '#475569',
+                                  border: '1px solid #e2e8f0',
+                                  padding: '12px 16px',
+                                  borderRadius: 10,
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8
+                                }}
                               >
-                                📞 Schedule Screening
+                                <span>📞</span> Schedule Screening
                               </button>
                             </>
                           )}
                           {selectedCandidate.stage === 'screening' && (
                             <>
-                              <button onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }} style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}>📝 Send Assignment</button>
+                              <button onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }} style={{
+                                background: 'linear-gradient(135deg, #44924c, #22c55e)',
+                                color: 'white',
+                                border: 'none',
+                                padding: '12px 16px',
+                                borderRadius: 10,
+                                fontSize: 13,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                boxShadow: '0 2px 8px rgba(68, 146, 76, 0.25)'
+                              }}>
+                                <span>📝</span> Send Assignment
+                              </button>
                               <button
                                 onClick={() => {
                                   setShowScreeningModal(true);
@@ -14551,18 +17213,44 @@ export default function App() {
                                     agenda: ''
                                   });
                                 }}
-                                style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
+                                style={{
+                                  background: '#f8fafc',
+                                  color: '#475569',
+                                  border: '1px solid #e2e8f0',
+                                  padding: '12px 16px',
+                                  borderRadius: 10,
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8
+                                }}
                               >
-                                📞 Reschedule Call
+                                <span>📞</span> Reschedule Call
                               </button>
                             </>
                           )}
                           {(selectedCandidate.stage === 'assignment-sent') && (
                             <button
                               onClick={() => pop('📧 Reminder email sent to ' + selectedCandidate.name)}
-                              style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
+                              style={{
+                                background: '#f8fafc',
+                                color: '#475569',
+                                border: '1px solid #e2e8f0',
+                                padding: '12px 16px',
+                                borderRadius: 10,
+                                fontSize: 13,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8
+                              }}
                             >
-                              📧 Send Reminder
+                              <span>📧</span> Send Reminder
                             </button>
                           )}
                           {selectedCandidate.stage === 'assignment' && selectedCandidate.assignmentSubmitted && (
@@ -14572,9 +17260,23 @@ export default function App() {
                                 setShowInterviewModal(true);
                                 setInterviewForm({ title: `Interview - ${selectedCandidate.role}`, date: '', time: '', interviewer: '', duration: '60', locationType: 'online', platform: 'Google Meet', meetingLink: '', address: '', notes: '' });
                               }}
-                              style={{ ...styles.btn1, justifyContent: 'center', padding: '10px' }}
+                              style={{
+                                background: 'linear-gradient(135deg, #44924c, #22c55e)',
+                                color: 'white',
+                                border: 'none',
+                                padding: '12px 16px',
+                                borderRadius: 10,
+                                fontSize: 13,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                boxShadow: '0 2px 8px rgba(68, 146, 76, 0.25)'
+                              }}
                             >
-                              📅 Schedule Interview
+                              <span>📅</span> Schedule Interview
                             </button>
                           )}
                           {selectedCandidate.stage === 'interview' && (() => {
@@ -14951,250 +17653,315 @@ export default function App() {
                               🎉 Confirm Hire & Start Onboarding
                             </button>
                           )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Assignment Actions - Show when assignment has been sent, hide when interview is scheduled or offer is sent */}
-                      {candidateAssignments.length > 0 && selectedCandidate?.stage !== 'interview' && selectedCandidate?.stage !== 'offer-sent' && selectedCandidate?.stage !== 'offer-accepted' && selectedCandidate?.stage !== 'hired' && (
+                        {/* Assignment Status Card - Compact Design */}
+                        {candidateAssignments.length > 0 && selectedCandidate?.stage !== 'interview' && selectedCandidate?.stage !== 'offer-sent' && selectedCandidate?.stage !== 'offer-accepted' && selectedCandidate?.stage !== 'hired' && (
                         (() => {
                           const assignment = candidateAssignments[0];
                           const isReviewed = assignment.status === 'reviewed' || assignment.status === 'passed';
                           const isFailed = assignment.status === 'failed';
+                          const isSubmitted = assignment.status === 'submitted';
 
-                          // Compact card for reviewed/passed assignments
-                          if (isReviewed) {
-                            return (
-                              <div style={{
-                                background: '#f0fdf4',
-                                border: '1px solid #86efac',
-                                borderRadius: 10,
-                                padding: 12,
-                                marginBottom: 16
-                              }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <span style={{ fontSize: 16 }}>✅</span>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: '#166534' }}>Assignment Passed</span>
-                                  </div>
-                                  {assignment.score && (
-                                    <span style={{ fontSize: 12, color: '#f59e0b' }}>{'⭐'.repeat(assignment.score)}</span>
-                                  )}
-                                </div>
-                                <div style={{ fontSize: 12, color: '#475569' }}>
-                                  {assignment.assignmentName}
-                                  {assignment.reviewedBy && (
-                                    <span style={{ color: '#94a3b8' }}> • Reviewed by {assignment.reviewedBy}</span>
-                                  )}
-                                </div>
-                                {/* Schedule Interview Button */}
-                                <button
-                                  onClick={() => {
-                                    setInterviewCandidate(selectedCandidate);
-                                    setInterviewForm({
-                                      title: `Interview Round ${(selectedCandidate.interviewRounds?.length || 0) + 1}`,
-                                      date: '',
-                                      time: '',
-                                      interviewer: '',
-                                      duration: '60',
-                                      locationType: 'online',
-                                      platform: 'Google Meet',
-                                      meetingLink: '',
-                                      address: '',
-                                      notes: '',
-                                      isEditing: false
-                                    });
-                                    setShowInterviewModal(true);
-                                  }}
-                                  style={{
-                                    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                                    color: 'white',
-                                    border: 'none',
-                                    padding: '10px 16px',
-                                    borderRadius: 8,
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    width: '100%',
-                                    marginTop: 10,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: 6
-                                  }}
-                                >
-                                  📅 Schedule Interview
-                                </button>
-                              </div>
-                            );
-                          }
-
-                          // Regular card for pending/failed assignments
                           return (
                             <div style={{
-                              ...styles.box,
-                              padding: 16,
-                              background: isFailed ? '#fef2f2' : '#f0fdf4',
-                              border: `2px solid ${isFailed ? '#ef4444' : '#22c55e'}`
+                              background: 'white',
+                              borderRadius: 14,
+                              border: `1px solid ${isReviewed ? '#86efac' : isFailed ? '#fca5a5' : isSubmitted ? '#86efac' : '#fde68a'}`,
+                              overflow: 'hidden'
                             }}>
-                              <h4 style={{
-                                fontSize: 12,
-                                fontWeight: 600,
-                                color: isFailed ? '#dc2626' : '#166534',
-                                marginBottom: 12,
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.5
+                              {/* Header */}
+                              <div style={{
+                                background: isReviewed ? 'linear-gradient(135deg, #22c55e, #16a34a)' : isFailed ? 'linear-gradient(135deg, #ef4444, #dc2626)' : isSubmitted ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                                padding: '10px 16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                color: 'white'
                               }}>
-                                {isFailed ? '❌ Assignment Failed' : '📝 Assignment Sent'}
-                              </h4>
-                              <div style={{ marginBottom: 12 }}>
-                                <div style={{ fontSize: 13, color: '#1e293b', marginBottom: 4 }}>
-                                  <strong>{assignment.assignmentName}</strong>
+                                <span style={{ fontSize: 14 }}>{isReviewed || isSubmitted ? '✅' : isFailed ? '❌' : '📝'}</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                  {isReviewed ? 'Passed' : isFailed ? 'Failed' : isSubmitted ? 'Submitted' : 'Assignment Sent'}
+                                </span>
+                                <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.9 }}>
+                                  {new Date(assignment.sentAt).toLocaleDateString()}
+                                </span>
+                              </div>
+
+                              {/* Content */}
+                              <div style={{ padding: 14 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>
+                                  {assignment.assignmentName}
                                 </div>
-                                <div style={{ fontSize: 12, color: '#64748b', display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                                  <span>Status: <strong style={{ textTransform: 'capitalize', color: isFailed ? '#ef4444' : '#f59e0b' }}>{assignment.status}</strong></span>
-                                  <span>Sent: {new Date(assignment.sentAt).toLocaleDateString()}</span>
-                                </div>
-                                {assignment.reviewNotes && (
-                                  <div style={{
-                                    fontSize: 12,
-                                    color: '#475569',
-                                    marginTop: 8,
-                                    padding: 8,
-                                    background: 'rgba(255,255,255,0.5)',
-                                    borderRadius: 6,
-                                    fontStyle: 'italic'
-                                  }}>
-                                    "{assignment.reviewNotes}"
+                                {assignment.score && (
+                                  <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 8 }}>{'⭐'.repeat(assignment.score)}</div>
+                                )}
+
+                                {/* Submission Details - Show when submitted */}
+                                {isSubmitted && (assignment.submissionLinks?.length > 0 || assignment.submissionLink || assignment.submissionFiles?.length > 0 || assignment.submissionNotes) && (
+                                  <div style={{ marginTop: 10, padding: 10, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                                    <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b', marginBottom: 8, textTransform: 'uppercase' }}>Submission</div>
+
+                                    {/* Links */}
+                                    {(assignment.submissionLinks?.length > 0 || assignment.submissionLink) && (
+                                      <div style={{ marginBottom: 8 }}>
+                                        {(assignment.submissionLinks || [assignment.submissionLink].filter(Boolean)).map((link, idx) => (
+                                          <a
+                                            key={idx}
+                                            href={link.startsWith('http') ? link : `https://${link}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: 6,
+                                              padding: '6px 10px',
+                                              background: '#fff',
+                                              border: '1px solid #e2e8f0',
+                                              borderRadius: 6,
+                                              fontSize: 11,
+                                              color: '#3b82f6',
+                                              textDecoration: 'none',
+                                              marginBottom: 4
+                                            }}
+                                          >
+                                            <span>🔗</span>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link}</span>
+                                            <span style={{ marginLeft: 'auto', fontSize: 10 }}>↗</span>
+                                          </a>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Files */}
+                                    {assignment.submissionFiles?.length > 0 && (
+                                      <div style={{ marginBottom: 8 }}>
+                                        {assignment.submissionFiles.map((file, idx) => (
+                                          <button
+                                            key={idx}
+                                            onClick={async () => {
+                                              try {
+                                                const signedUrl = await uploadAPI.getSignedUrl(file.key || file.url);
+                                                window.open(signedUrl, '_blank');
+                                              } catch (e) {
+                                                pop('Failed to open file');
+                                              }
+                                            }}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: 6,
+                                              padding: '6px 10px',
+                                              background: '#fff',
+                                              border: '1px solid #e2e8f0',
+                                              borderRadius: 6,
+                                              fontSize: 11,
+                                              color: '#475569',
+                                              cursor: 'pointer',
+                                              width: '100%',
+                                              marginBottom: 4,
+                                              textAlign: 'left'
+                                            }}
+                                          >
+                                            <span>📎</span>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name || 'Attachment'}</span>
+                                            <span style={{ marginLeft: 'auto', fontSize: 10 }}>↓</span>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Notes */}
+                                    {assignment.submissionNotes && (
+                                      <div style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic', lineHeight: 1.4 }}>
+                                        "{assignment.submissionNotes}"
+                                      </div>
+                                    )}
                                   </div>
                                 )}
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                {/* Show Mark Completed button only if not already reviewed/passed/failed */}
-                                {!['reviewed', 'passed', 'failed'].includes(assignment.status) && (
+
+                                {/* Actions */}
+                                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                                  {!['reviewed', 'passed', 'failed'].includes(assignment.status) && (
+                                    <button
+                                      onClick={() => {
+                                        setAssignmentToReview(assignment);
+                                        setAssignmentReviewForm({ rating: 0, feedback: '', status: 'passed' });
+                                        setShowAssignmentReviewModal(true);
+                                      }}
+                                      style={{
+                                        flex: 1,
+                                        background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                        color: 'white',
+                                        border: 'none',
+                                        padding: '10px 12px',
+                                        borderRadius: 8,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6
+                                      }}
+                                    >
+                                      <span>✓</span> Review
+                                    </button>
+                                  )}
                                   <button
-                                    onClick={() => {
-                                      setAssignmentToReview(assignment);
-                                      setAssignmentReviewForm({
-                                        rating: 0,
-                                        feedback: '',
-                                        status: 'passed'
-                                      });
-                                      setShowAssignmentReviewModal(true);
-                                    }}
+                                    onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }}
                                     style={{
-                                      background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-                                      color: 'white',
-                                      border: 'none',
-                                      padding: '12px 16px',
-                                      borderRadius: 10,
-                                      fontSize: 14,
+                                      flex: 1,
+                                      background: '#f8fafc',
+                                      color: '#475569',
+                                      border: '1px solid #e2e8f0',
+                                      padding: '10px 12px',
+                                      borderRadius: 8,
+                                      fontSize: 12,
                                       fontWeight: 600,
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      gap: 8,
-                                      boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                                      cursor: 'pointer'
                                     }}
                                   >
-                                    <span>✓</span> Mark Assignment Completed
+                                    View Details
                                   </button>
-                                )}
-                                <button
-                                  onClick={() => { setModal('selectAssignment'); fetchAssignmentsForCandidate(selectedCandidate); }}
-                                  style={{ ...styles.btn2, justifyContent: 'center', padding: '10px' }}
-                                >
-                                  📝 View / Send Another Assignment
-                                </button>
+                                </div>
                               </div>
                             </div>
                           );
                         })()
                       )}
+                      </div>
 
-                      {/* Move & Final Actions */}
-                      <div style={{ ...styles.box, padding: 16 }}>
-                        <h4 style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {selectedCandidate.stage === 'offer-accepted' ? 'Final Decision' : 'Pipeline Actions'}
-                        </h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {/* For offer-accepted: Show only Hire and Reject options */}
-                          {selectedCandidate.stage === 'offer-accepted' ? (
-                            <>
-                              <button
-                                onClick={() => setShowHireConfirmModal(true)}
-                                style={{
-                                  ...styles.btn1,
-                                  justifyContent: 'center',
-                                  padding: '14px 16px',
-                                  background: 'linear-gradient(135deg, #10b981, #059669)',
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-                                }}
-                              >
-                                ✅ Confirm Hire
-                              </button>
-                              <button
-                                onClick={() => setShowRejectConfirm(true)}
-                                style={{ ...styles.btn2, justifyContent: 'center', padding: '12px', background: '#fef2f2', color: '#ef4444', border: 'none', fontSize: 13 }}
-                              >
-                                ❌ Reject Candidate
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              {selectedCandidate.stage !== 'hired' && selectedCandidate.stage !== 'rejected' && (
-                                <button
-                                  onClick={() => { setModal('assignTask'); setAssignedTo(null); setCommentText(''); }}
-                                  style={{ ...styles.btn1, justifyContent: 'center', padding: '12px', background: 'linear-gradient(135deg, #44924c, #2d6a33)' }}
-                                >
-                                  ➡️ Move to Next Stage
-                                </button>
-                              )}
-                              <button
-                                onClick={(e) => { e.stopPropagation(); toggleHotApplicant(selectedCandidate.id); setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant}); }}
-                                style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef3c7', color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706', border: 'none' }}
-                              >
-                                {selectedCandidate.isHotApplicant ? '❄️ Remove from Hot' : '🔥 Mark as Hot Applicant'}
-                              </button>
-                              {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
-                                <button onClick={() => setShowRejectConfirm(true)} style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#fef2f2', color: '#ef4444', border: 'none' }}>
-                                  ❌ Reject Candidate
-                                </button>
-                              )}
-                              {selectedCandidate.stage === 'hired' && (
-                                <div style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  padding: '12px 16px',
-                                  background: 'linear-gradient(135deg, #10b981, #059669)',
-                                  color: 'white',
-                                  borderRadius: 10,
-                                  fontSize: 14,
-                                  fontWeight: 600
-                                }}>
-                                  ✅ Successfully Hired
-                                </div>
-                              )}
-                              {/* Revert Stage Button - Only show if not in first stage and not hired */}
-                              {selectedCandidate.stage !== 'shortlisting' && selectedCandidate.stage !== 'hired' && (
-                                <button
-                                  onClick={() => {
-                                    setShowRevertStageModal(true);
-                                    setRevertReason('');
-                                    setRevertTargetStage('');
-                                  }}
-                                  style={{ ...styles.btn2, justifyContent: 'center', padding: '10px', background: '#f0f9ff', color: '#0369a1', border: '1px solid #bae6fd' }}
-                                >
-                                  ⏪ Revert to Previous Stage
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
+                      {/* Secondary Actions Row */}
+                      <div style={{
+                        marginTop: 16,
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: 10
+                      }}>
+                        {selectedCandidate.stage !== 'hired' && selectedCandidate.stage !== 'rejected' && (
+                          <button
+                            onClick={() => {
+                              setForceMoveReason('');
+                              setShowForceMoveModal(true);
+                            }}
+                            style={{
+                              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                              color: 'white',
+                              border: 'none',
+                              padding: '12px 16px',
+                              borderRadius: 10,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: 4,
+                              boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)'
+                            }}
+                          >
+                            <span style={{ fontSize: 18 }}>⚡</span>
+                            <span>Force Move</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleHotApplicant(selectedCandidate.id);
+                            setSelectedCandidate({...selectedCandidate, isHotApplicant: !selectedCandidate.isHotApplicant});
+                          }}
+                          style={{
+                            background: selectedCandidate.isHotApplicant ? '#fef2f2' : '#fef9c3',
+                            color: selectedCandidate.isHotApplicant ? '#dc2626' : '#d97706',
+                            border: 'none',
+                            padding: '12px 16px',
+                            borderRadius: 10,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 4
+                          }}
+                        >
+                          <span style={{ fontSize: 18 }}>{selectedCandidate.isHotApplicant ? '❄️' : '🔥'}</span>
+                          <span>{selectedCandidate.isHotApplicant ? 'Remove Hot' : 'Mark Hot'}</span>
+                        </button>
+                        {selectedCandidate.stage !== 'rejected' && selectedCandidate.stage !== 'hired' && (
+                          <button
+                            onClick={() => setShowRejectConfirm(true)}
+                            style={{
+                              background: '#fef2f2',
+                              color: '#ef4444',
+                              border: 'none',
+                              padding: '12px 16px',
+                              borderRadius: 10,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                          >
+                            <span style={{ fontSize: 18 }}>❌</span>
+                            <span>Reject</span>
+                          </button>
+                        )}
+                        {selectedCandidate.stage !== 'shortlisting' && selectedCandidate.stage !== 'hired' && selectedCandidate.stage !== 'rejected' && (
+                          <button
+                            onClick={() => {
+                              setShowRevertStageModal(true);
+                              setRevertReason('');
+                              setRevertTargetStage('');
+                            }}
+                            style={{
+                              background: '#f0f9ff',
+                              color: '#0369a1',
+                              border: '1px solid #bae6fd',
+                              padding: '12px 16px',
+                              borderRadius: 10,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                          >
+                            <span style={{ fontSize: 18 }}>⏪</span>
+                            <span>Revert</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            setTalentPoolForm({ reason: '', tags: [], notes: '' });
+                            setTalentPoolTagInput('');
+                            setShowTalentPoolModal(true);
+                          }}
+                          style={{
+                            background: 'linear-gradient(135deg, #f0f9ff, #e0f2fe)',
+                            color: '#0369a1',
+                            border: '1px solid #7dd3fc',
+                            padding: '12px 16px',
+                            borderRadius: 10,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 4
+                          }}
+                        >
+                          <span style={{ fontSize: 18 }}>💎</span>
+                          <span>Save to Pool</span>
+                        </button>
                       </div>
                       </>
                       )}
@@ -15203,6 +17970,263 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Force Move to Next Stage Modal */}
+            {showForceMoveModal && selectedCandidate && (() => {
+              const stageMap = {
+                'shortlisting': 'Shortlisting',
+                'screening': 'Screening Call',
+                'assignment-sent': 'Assignment Sent',
+                'assignment-submitted': 'Assignment Submitted',
+                'interview': 'Interview',
+                'offer-sent': 'Offer Sent',
+                'offer-accepted': 'Offer Accepted',
+                'hired': 'Hired'
+              };
+              const allStages = ['shortlisting', 'screening', 'assignment-sent', 'assignment-submitted', 'interview', 'offer-sent', 'offer-accepted', 'hired'];
+              const currentStageIndex = allStages.indexOf(selectedCandidate.stage);
+              const nextStage = currentStageIndex < allStages.length - 1 ? allStages[currentStageIndex + 1] : null;
+
+              // Generate warning messages based on current stage
+              const getWarningMessage = () => {
+                switch (selectedCandidate.stage) {
+                  case 'shortlisting':
+                    return 'Candidate will skip the screening call. Make sure you have evaluated their profile.';
+                  case 'screening':
+                    return 'Candidate will skip the assignment stage. Ensure they have demonstrated sufficient skills.';
+                  case 'assignment-sent':
+                    return 'Assignment has not been submitted yet. Moving forward without reviewing their work.';
+                  case 'assignment-submitted':
+                    return 'Assignment has not been formally reviewed. Consider reviewing before moving to interview.';
+                  case 'interview':
+                    return 'Interview process may not be complete. Ensure all rounds are done before sending offer.';
+                  case 'offer-sent':
+                    return 'Offer has not been accepted yet. Only proceed if candidate has verbally confirmed.';
+                  default:
+                    return 'This action will skip the normal workflow. Please provide a reason.';
+                }
+              };
+
+              return (
+                <div
+                  style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0,0,0,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 10000
+                  }}
+                  onClick={() => {
+                    setShowForceMoveModal(false);
+                    setForceMoveReason('');
+                  }}
+                >
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      background: 'white',
+                      borderRadius: 20,
+                      width: 480,
+                      boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {/* Header */}
+                    <div style={{
+                      background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                      padding: '24px 28px',
+                      color: 'white'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <span style={{ fontSize: 32 }}>⚡</span>
+                        <div>
+                          <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>Force Move to Next Stage</h3>
+                          <p style={{ fontSize: 13, margin: 0, opacity: 0.9 }}>
+                            {selectedCandidate.name}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Content */}
+                    <div style={{ padding: 28 }}>
+                      {/* Stage Info */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 16,
+                        padding: 16,
+                        background: '#f8fafc',
+                        borderRadius: 12,
+                        marginBottom: 20
+                      }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>FROM</div>
+                          <div style={{
+                            padding: '6px 14px',
+                            background: '#e2e8f0',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: '#475569'
+                          }}>
+                            {stageMap[selectedCandidate.stage]}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 20, color: '#f59e0b' }}>→</span>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>TO</div>
+                          <div style={{
+                            padding: '6px 14px',
+                            background: 'linear-gradient(135deg, #44924c, #22c55e)',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: 'white'
+                          }}>
+                            {nextStage ? stageMap[nextStage] : 'End'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Warning */}
+                      <div style={{
+                        background: '#fef3c7',
+                        border: '1px solid #fde68a',
+                        borderRadius: 12,
+                        padding: 14,
+                        marginBottom: 20,
+                        display: 'flex',
+                        gap: 12
+                      }}>
+                        <span style={{ fontSize: 20 }}>⚠️</span>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 4 }}>Warning</div>
+                          <div style={{ fontSize: 12, color: '#a16207', lineHeight: 1.5 }}>
+                            {getWarningMessage()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Reason Input */}
+                      <div style={{ marginBottom: 24 }}>
+                        <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+                          Reason for Force Move *
+                        </label>
+                        <textarea
+                          value={forceMoveReason}
+                          onChange={(e) => setForceMoveReason(e.target.value)}
+                          placeholder="Explain why you're skipping the normal workflow..."
+                          style={{
+                            width: '100%',
+                            padding: 12,
+                            borderRadius: 10,
+                            border: '2px solid #e2e8f0',
+                            fontSize: 13,
+                            minHeight: 80,
+                            resize: 'vertical',
+                            fontFamily: 'inherit'
+                          }}
+                        />
+                      </div>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        <button
+                          onClick={() => {
+                            setShowForceMoveModal(false);
+                            setForceMoveReason('');
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '12px 16px',
+                            background: '#f1f5f9',
+                            color: '#64748b',
+                            border: 'none',
+                            borderRadius: 10,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!forceMoveReason.trim()) {
+                              pop('Please provide a reason for force move');
+                              return;
+                            }
+                            if (!nextStage) {
+                              pop('Cannot move beyond the final stage');
+                              return;
+                            }
+
+                            try {
+                              // Update stage
+                              const res = await fetch(`${API_BASE}/applications/${selectedCandidate.id}/stage`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ stage: nextStage })
+                              });
+
+                              if (res.ok) {
+                                // Add timeline entry
+                                await fetch(`${API_BASE}/applications/${selectedCandidate.id}/timeline`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    type: 'force_move',
+                                    title: `Force moved from ${stageMap[selectedCandidate.stage]} to ${stageMap[nextStage]}`,
+                                    description: forceMoveReason,
+                                    createdBy: currentUser?.name || 'Admin'
+                                  })
+                                });
+
+                                pop(`Moved to ${stageMap[nextStage]}`);
+                                setShowForceMoveModal(false);
+                                setForceMoveReason('');
+                                setSelectedCandidate(null);
+                                fetchApplications();
+                              } else {
+                                pop('Failed to move stage');
+                              }
+                            } catch (error) {
+                              console.error('Error force moving:', error);
+                              pop('Failed to move stage');
+                            }
+                          }}
+                          disabled={!forceMoveReason.trim()}
+                          style={{
+                            flex: 2,
+                            padding: '12px 16px',
+                            background: forceMoveReason.trim() ? 'linear-gradient(135deg, #f59e0b, #d97706)' : '#e2e8f0',
+                            color: forceMoveReason.trim() ? 'white' : '#94a3b8',
+                            border: 'none',
+                            borderRadius: 10,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            cursor: forceMoveReason.trim() ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8
+                          }}
+                        >
+                          <span>⚡</span> Confirm Force Move
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Revert Stage Modal */}
             {showRevertStageModal && selectedCandidate && (() => {
@@ -15385,11 +18409,49 @@ export default function App() {
                     />
                   </div>
 
+                  {/* Save for Later Option */}
+                  <div style={{
+                    marginBottom: 24,
+                    padding: 16,
+                    background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                    borderRadius: 12,
+                    border: '1px solid #7dd3fc'
+                  }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 12,
+                      cursor: 'pointer'
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={saveForLaterOnReject}
+                        onChange={(e) => setSaveForLaterOnReject(e.target.checked)}
+                        style={{
+                          width: 20,
+                          height: 20,
+                          marginTop: 2,
+                          accentColor: '#0ea5e9',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#0369a1', fontSize: 14, marginBottom: 4 }}>
+                          Save to Talent Pool
+                        </div>
+                        <div style={{ fontSize: 12, color: '#0284c7', lineHeight: 1.5 }}>
+                          Keep this candidate in your talent pool for future opportunities. They may be a great fit for other roles.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
                   <div style={{ display: 'flex', gap: 12 }}>
                     <button
                       onClick={() => {
                         setShowRejectConfirm(false);
                         setRejectionReason('');
+                        setSaveForLaterOnReject(false);
                       }}
                       style={{
                         ...styles.btn2,
@@ -15400,7 +18462,36 @@ export default function App() {
                       Cancel
                     </button>
                     <button
-                      onClick={confirmRejectCandidate}
+                      onClick={async () => {
+                        if (!rejectionReason.trim()) {
+                          pop('Please provide a rejection reason');
+                          return;
+                        }
+
+                        // If saving to talent pool, add them first
+                        if (saveForLaterOnReject && selectedCandidate) {
+                          try {
+                            await fetch(`${API_BASE}/talent-pool/add`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                candidateId: selectedCandidate.candidateId || selectedCandidate._original?.candidate_id,
+                                reason: 'Potential fit for future roles',
+                                tags: ['From Rejection'],
+                                notes: `Rejected from ${selectedCandidate.role} position. Reason: ${rejectionReason}`,
+                                addedBy: currentUser?.name || 'Admin'
+                              })
+                            });
+                            pop('Candidate saved to talent pool');
+                          } catch (error) {
+                            console.error('Failed to add to talent pool:', error);
+                          }
+                        }
+
+                        // Then proceed with rejection
+                        confirmRejectCandidate();
+                        setSaveForLaterOnReject(false);
+                      }}
                       style={{
                         ...styles.btn1,
                         flex: 1,
@@ -15825,14 +18916,32 @@ export default function App() {
                   </div>
 
                   <div style={{ marginBottom: 16 }}>
-                    <label style={styles.label}>Meeting Link</label>
+                    <label style={styles.label}>Meeting Link {screeningForm.platform !== 'Phone Call' && '*'}</label>
                     <input
                       type="url"
                       value={screeningForm.meetingLink}
                       onChange={(e) => setScreeningForm({ ...screeningForm, meetingLink: e.target.value })}
-                      placeholder="https://meet.google.com/..."
-                      style={styles.input}
+                      placeholder={
+                        screeningForm.platform === 'Google Meet' ? 'https://meet.google.com/xxx-xxxx-xxx' :
+                        screeningForm.platform === 'Zoom' ? 'https://zoom.us/j/xxxxxxxxx' :
+                        screeningForm.platform === 'Microsoft Teams' ? 'https://teams.microsoft.com/l/meetup-join/...' :
+                        'Phone number or call details'
+                      }
+                      style={{
+                        ...styles.input,
+                        borderColor: screeningForm.meetingLink && !validateMeetingLink(screeningForm.platform, screeningForm.meetingLink).valid ? '#f59e0b' : '#e2e8f0'
+                      }}
                     />
+                    {screeningForm.meetingLink && !validateMeetingLink(screeningForm.platform, screeningForm.meetingLink).valid && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        ⚠️ {validateMeetingLink(screeningForm.platform, screeningForm.meetingLink).error}
+                      </p>
+                    )}
+                    {!screeningForm.meetingLink && screeningForm.platform !== 'Phone Call' && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#64748b' }}>
+                        Enter a valid {screeningForm.platform} link
+                      </p>
+                    )}
                   </div>
 
                   <div style={{ marginBottom: 16 }}>
@@ -15867,6 +18976,18 @@ export default function App() {
                         if (!screeningForm.date || !screeningForm.time || !screeningForm.interviewer) {
                           pop('Please fill in all required fields');
                           return;
+                        }
+                        // Validate meeting link for non-phone platforms
+                        if (screeningForm.platform !== 'Phone Call') {
+                          if (!screeningForm.meetingLink) {
+                            pop('Meeting link is required');
+                            return;
+                          }
+                          const linkValidation = validateMeetingLink(screeningForm.platform, screeningForm.meetingLink);
+                          if (!linkValidation.valid) {
+                            pop(linkValidation.error);
+                            return;
+                          }
                         }
                         setShowScreeningPreview(true);
                       }}
@@ -18017,10 +21138,23 @@ export default function App() {
                           type="url"
                           value={interviewForm.meetingLink}
                           onChange={e => setInterviewForm({ ...interviewForm, meetingLink: e.target.value })}
-                          placeholder="https://meet.google.com/xxx-xxxx-xxx"
-                          style={{ ...styles.input, width: '100%' }}
+                          placeholder={
+                            interviewForm.platform === 'Google Meet' ? 'https://meet.google.com/xxx-xxxx-xxx' :
+                            interviewForm.platform === 'Zoom' ? 'https://zoom.us/j/xxxxxxxxx' :
+                            'https://teams.microsoft.com/l/meetup-join/...'
+                          }
+                          style={{
+                            ...styles.input,
+                            width: '100%',
+                            borderColor: interviewForm.meetingLink && !validateMeetingLink(interviewForm.platform, interviewForm.meetingLink).valid ? '#f59e0b' : '#e2e8f0'
+                          }}
                           required
                         />
+                        {interviewForm.meetingLink && !validateMeetingLink(interviewForm.platform, interviewForm.meetingLink).valid && (
+                          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            ⚠️ {validateMeetingLink(interviewForm.platform, interviewForm.meetingLink).error}
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -18082,9 +21216,16 @@ export default function App() {
                         return;
                       }
                       // Validate meeting link for online interviews
-                      if (interviewForm.locationType === 'online' && !interviewForm.meetingLink) {
-                        pop('Meeting link is required for online interviews');
-                        return;
+                      if (interviewForm.locationType === 'online') {
+                        if (!interviewForm.meetingLink) {
+                          pop('Meeting link is required for online interviews');
+                          return;
+                        }
+                        const linkValidation = validateMeetingLink(interviewForm.platform, interviewForm.meetingLink);
+                        if (!linkValidation.valid) {
+                          pop(linkValidation.error);
+                          return;
+                        }
                       }
                       // Validate address for offline interviews
                       if (interviewForm.locationType === 'offline' && !interviewForm.address) {
@@ -18380,6 +21521,7 @@ export default function App() {
                             locationType: interviewForm.locationType,
                             platform: interviewForm.platform,
                             meetingLink: interviewForm.meetingLink,
+                            emailSent: true, // No email sent for edits, just show success
                             sentAt: new Date().toLocaleString('en-US', {
                               month: 'long', day: 'numeric', year: 'numeric',
                               hour: 'numeric', minute: '2-digit', hour12: true
@@ -18411,8 +21553,9 @@ export default function App() {
 
                           // Send email invitations with calendar invites
                           const selectedInterviewer = admins.find(a => a.name === interviewForm.interviewer);
+                          let emailSentSuccess = false;
                           try {
-                            await emailAPI.sendInterviewWithCalendar({
+                            const emailResult = await emailAPI.sendInterviewWithCalendar({
                               candidateName: interviewCandidate.name,
                               candidateEmail: interviewCandidate.email,
                               jobTitle: interviewCandidate.role,
@@ -18428,9 +21571,11 @@ export default function App() {
                               interviewerEmail: selectedInterviewer?.email || null,
                               notes: interviewForm.notes
                             });
+                            emailSentSuccess = emailResult?.success !== false;
                             console.log('✅ Interview emails sent successfully');
                           } catch (emailError) {
                             console.error('Failed to send interview emails:', emailError);
+                            emailSentSuccess = false;
                             // Don't fail the whole operation if email fails
                           }
 
@@ -18488,6 +21633,7 @@ export default function App() {
                             locationType: interviewForm.locationType,
                             platform: interviewForm.platform,
                             meetingLink: interviewForm.meetingLink,
+                            emailSent: emailSentSuccess,
                             sentAt: new Date().toLocaleString('en-US', {
                               month: 'long', day: 'numeric', year: 'numeric',
                               hour: 'numeric', minute: '2-digit', hour12: true
@@ -18653,6 +21799,115 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Candidate Submission Section */}
+              {(assignmentToReview.submissionDate || assignmentToReview.submissionLink || assignmentToReview.submissionLinks?.length > 0 || assignmentToReview.submissionFiles?.length > 0) && (
+                <div style={{
+                  padding: 16,
+                  background: '#ecfdf5',
+                  borderRadius: 12,
+                  marginBottom: 24,
+                  border: '1px solid #a7f3d0'
+                }}>
+                  <div style={{ fontSize: 13, color: '#047857', marginBottom: 12, fontWeight: 600 }}>Candidate's Submission</div>
+
+                  {/* Submission Date */}
+                  {assignmentToReview.submissionDate && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>Submitted On</div>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: '#1e293b' }}>
+                        {new Date(assignmentToReview.submissionDate).toLocaleDateString()} at {new Date(assignmentToReview.submissionDate).toLocaleTimeString()}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submission Links */}
+                  {(assignmentToReview.submissionLinks?.length > 0 || assignmentToReview.submissionLink) && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Submission Link{(assignmentToReview.submissionLinks?.length || 0) > 1 ? 's' : ''}</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {(assignmentToReview.submissionLinks?.length > 0 ? assignmentToReview.submissionLinks : [assignmentToReview.submissionLink]).filter(Boolean).map((link, idx) => (
+                          <a
+                            key={idx}
+                            href={link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              fontSize: 14,
+                              color: '#059669',
+                              textDecoration: 'none',
+                              padding: '6px 12px',
+                              background: 'white',
+                              borderRadius: 8,
+                              border: '1px solid #d1fae5',
+                              maxWidth: 'fit-content'
+                            }}
+                          >
+                            <span style={{ fontSize: 16 }}>🔗</span>
+                            {link.length > 50 ? link.substring(0, 50) + '...' : link}
+                            <span style={{ fontSize: 12 }}>↗</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submission Files */}
+                  {assignmentToReview.submissionFiles?.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Uploaded Files</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {assignmentToReview.submissionFiles.map((file, idx) => (
+                          <a
+                            key={idx}
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              fontSize: 14,
+                              color: '#1e293b',
+                              textDecoration: 'none',
+                              padding: '6px 12px',
+                              background: 'white',
+                              borderRadius: 8,
+                              border: '1px solid #e2e8f0',
+                              maxWidth: 'fit-content'
+                            }}
+                          >
+                            <span style={{ fontSize: 16 }}>📄</span>
+                            {file.name}
+                            <span style={{ fontSize: 12, color: '#64748b' }}>↗</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submission Notes */}
+                  {assignmentToReview.submissionNotes && (
+                    <div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Candidate's Notes</div>
+                      <div style={{
+                        fontSize: 14,
+                        color: '#1e293b',
+                        padding: '8px 12px',
+                        background: 'white',
+                        borderRadius: 8,
+                        border: '1px solid #e2e8f0',
+                        whiteSpace: 'pre-wrap'
+                      }}>
+                        {assignmentToReview.submissionNotes}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Rating */}
               <div style={{ marginBottom: 24 }}>
@@ -20933,6 +24188,376 @@ export default function App() {
               >
                 <span>🎉</span> Done - Start Onboarding
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add to Talent Pool Modal */}
+      {showTalentPoolModal && selectedCandidate && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.7)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000
+          }}
+          onClick={() => {
+            if (!isAddingToTalentPool) {
+              setShowTalentPoolModal(false);
+              setTalentPoolForm({ reason: '', tags: [], notes: '' });
+              setTalentPoolTagInput('');
+            }
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: 24,
+              width: '90%',
+              maxWidth: 560,
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+              padding: '28px 32px',
+              color: 'white'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{
+                  width: 56,
+                  height: 56,
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  borderRadius: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 28
+                }}>
+                  💎
+                </div>
+                <div>
+                  <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>
+                    Add to Talent Pool
+                  </h2>
+                  <p style={{ fontSize: 14, margin: 0, opacity: 0.9 }}>
+                    Save <strong>{selectedCandidate.name}</strong> for future opportunities
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '28px 32px' }}>
+              {/* Candidate Info Card */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                padding: 16,
+                background: '#f8fafc',
+                borderRadius: 12,
+                marginBottom: 24,
+                border: '1px solid #e2e8f0'
+              }}>
+                <div style={{
+                  width: 48,
+                  height: 48,
+                  background: 'linear-gradient(135deg, #44924c, #2d6a33)',
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'white',
+                  fontSize: 18,
+                  fontWeight: 700
+                }}>
+                  {selectedCandidate.name?.split(' ').map(n => n[0]).join('').substring(0, 2)}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: '#1e293b' }}>{selectedCandidate.name}</div>
+                  <div style={{ fontSize: 13, color: '#64748b' }}>{selectedCandidate.role}</div>
+                </div>
+                <div style={{
+                  padding: '6px 12px',
+                  background: '#dbeafe',
+                  color: '#1d4ed8',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 600
+                }}>
+                  {selectedCandidate.aiScore || '—'} AI Score
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+                  Why save this candidate?
+                </label>
+                <select
+                  value={talentPoolForm.reason}
+                  onChange={(e) => setTalentPoolForm({ ...talentPoolForm, reason: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    border: '2px solid #e2e8f0',
+                    fontSize: 14,
+                    color: '#1e293b',
+                    background: 'white',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="">Select a reason...</option>
+                  <option value="Strong technical skills">Strong technical skills</option>
+                  <option value="Great culture fit">Great culture fit</option>
+                  <option value="Impressive portfolio">Impressive portfolio</option>
+                  <option value="Overqualified for current role">Overqualified for current role</option>
+                  <option value="Timing not right">Timing not right</option>
+                  <option value="Consider for senior role">Consider for senior role</option>
+                  <option value="Potential for different team">Potential for different team</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              {/* Tags */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+                  Tags (for easy searching later)
+                </label>
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  padding: 12,
+                  background: '#f8fafc',
+                  borderRadius: 10,
+                  border: '2px solid #e2e8f0',
+                  minHeight: 48
+                }}>
+                  {talentPoolForm.tags.map((tag, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 12px',
+                        background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                        color: 'white',
+                        borderRadius: 20,
+                        fontSize: 12,
+                        fontWeight: 600
+                      }}
+                    >
+                      {tag}
+                      <button
+                        onClick={() => setTalentPoolForm({
+                          ...talentPoolForm,
+                          tags: talentPoolForm.tags.filter((_, i) => i !== idx)
+                        })}
+                        style={{
+                          background: 'rgba(255,255,255,0.3)',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: 18,
+                          height: 18,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          color: 'white'
+                        }}
+                      >
+                        x
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={talentPoolTagInput}
+                    onChange={(e) => setTalentPoolTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && talentPoolTagInput.trim()) {
+                        e.preventDefault();
+                        if (!talentPoolForm.tags.includes(talentPoolTagInput.trim())) {
+                          setTalentPoolForm({
+                            ...talentPoolForm,
+                            tags: [...talentPoolForm.tags, talentPoolTagInput.trim()]
+                          });
+                        }
+                        setTalentPoolTagInput('');
+                      }
+                    }}
+                    placeholder={talentPoolForm.tags.length === 0 ? "Type and press Enter to add tags..." : "Add more..."}
+                    style={{
+                      flex: 1,
+                      minWidth: 120,
+                      border: 'none',
+                      background: 'transparent',
+                      outline: 'none',
+                      fontSize: 13,
+                      color: '#1e293b'
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {['React', 'Node.js', 'Python', 'Senior', 'Junior', 'Full-Stack', 'Frontend', 'Backend', 'DevOps', 'AI/ML'].map(suggestion => (
+                    <button
+                      key={suggestion}
+                      onClick={() => {
+                        if (!talentPoolForm.tags.includes(suggestion)) {
+                          setTalentPoolForm({ ...talentPoolForm, tags: [...talentPoolForm.tags, suggestion] });
+                        }
+                      }}
+                      disabled={talentPoolForm.tags.includes(suggestion)}
+                      style={{
+                        padding: '4px 10px',
+                        background: talentPoolForm.tags.includes(suggestion) ? '#e2e8f0' : '#f1f5f9',
+                        color: talentPoolForm.tags.includes(suggestion) ? '#94a3b8' : '#64748b',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        cursor: talentPoolForm.tags.includes(suggestion) ? 'default' : 'pointer'
+                      }}
+                    >
+                      + {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+                  Notes (optional)
+                </label>
+                <textarea
+                  value={talentPoolForm.notes}
+                  onChange={(e) => setTalentPoolForm({ ...talentPoolForm, notes: e.target.value })}
+                  placeholder="Add any notes for future reference..."
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    border: '2px solid #e2e8f0',
+                    fontSize: 14,
+                    minHeight: 80,
+                    resize: 'vertical',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  onClick={() => {
+                    setShowTalentPoolModal(false);
+                    setTalentPoolForm({ reason: '', tags: [], notes: '' });
+                    setTalentPoolTagInput('');
+                  }}
+                  disabled={isAddingToTalentPool}
+                  style={{
+                    flex: 1,
+                    padding: '14px 20px',
+                    background: '#f1f5f9',
+                    color: '#64748b',
+                    border: 'none',
+                    borderRadius: 12,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!talentPoolForm.reason) {
+                      pop('Please select a reason');
+                      return;
+                    }
+
+                    setIsAddingToTalentPool(true);
+                    try {
+                      const res = await fetch(`${API_BASE}/talent-pool/add`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          candidateId: selectedCandidate.candidateId || selectedCandidate._original?.candidate_id,
+                          reason: talentPoolForm.reason,
+                          tags: talentPoolForm.tags,
+                          notes: talentPoolForm.notes,
+                          addedBy: currentUser?.name || 'Admin'
+                        })
+                      });
+                      const data = await res.json();
+
+                      if (data.success) {
+                        pop('Candidate added to talent pool!');
+                        setShowTalentPoolModal(false);
+                        setTalentPoolForm({ reason: '', tags: [], notes: '' });
+                        setTalentPoolTagInput('');
+                      } else {
+                        pop(data.error || 'Failed to add to talent pool');
+                      }
+                    } catch (error) {
+                      console.error('Error adding to talent pool:', error);
+                      pop('Failed to add to talent pool');
+                    }
+                    setIsAddingToTalentPool(false);
+                  }}
+                  disabled={isAddingToTalentPool}
+                  style={{
+                    flex: 2,
+                    padding: '14px 20px',
+                    background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 12,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: isAddingToTalentPool ? 'wait' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 15px rgba(14, 165, 233, 0.3)'
+                  }}
+                >
+                  {isAddingToTalentPool ? (
+                    <>
+                      <span style={{
+                        width: 18,
+                        height: 18,
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        borderTopColor: 'white',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite'
+                      }} />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <span>💎</span> Add to Talent Pool
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -5,7 +5,50 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { Application, Candidate, JobOpening, Interview, ActivityLog } = require('../models');
+const multer = require('multer');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { Application, Candidate, JobOpening, Interview, ActivityLog, CandidateAssignment, Offer } = require('../models');
+const { sendAssignmentSubmissionNotification } = require('../services/emailService');
+const s3Service = require('../services/s3Service');
+
+// Configure S3 client
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'ap-south-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+  }
+});
+
+// Configure multer for memory storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  fileFilter: (req, file, cb) => {
+    // Allow common file types for assignments
+    const allowedTypes = [
+      'application/pdf',
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+      'text/html',
+      'text/css',
+      'text/javascript',
+      'application/javascript',
+      'application/json',
+      'image/png',
+      'image/jpeg',
+      'image/gif'
+    ];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(zip|pdf|doc|docx|txt|js|jsx|ts|tsx|py|java|cpp|c|html|css|json|md|png|jpg|jpeg|gif)$/i)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Please upload PDF, ZIP, DOC, or code files.'), false);
+    }
+  }
+});
 
 /**
  * Generate a secure tracking token for a candidate
@@ -22,6 +65,53 @@ function generateTrackingToken(email, candidateId) {
 function verifyToken(token, email, candidateId) {
   const expectedToken = generateTrackingToken(email, candidateId);
   return token === expectedToken;
+}
+
+/**
+ * Get offer details for portal display
+ */
+async function getOfferDetails(applicationId) {
+  try {
+    const offer = await Offer.findOne({ application_id: applicationId }).lean();
+    if (!offer) return null;
+
+    // Get signed URL for offer file if exists
+    let offerFileUrl = null;
+    if (offer.offer_file?.key) {
+      try {
+        offerFileUrl = await s3Service.getSignedUrl(offer.offer_file.key);
+      } catch (e) {
+        console.error('Error getting signed URL for offer file:', e);
+      }
+    }
+
+    return {
+      offerType: offer.offer_type || 'text',
+      // Only show text content if it's a text-based offer
+      offerContent: offer.offer_type === 'text' ? offer.offer_content : null,
+      // File details for PDF/Word offers
+      offerFile: offer.offer_file?.key ? {
+        name: offer.offer_file.name,
+        url: offerFileUrl,
+        type: offer.offer_file.type
+      } : null,
+      // Compensation details
+      salary: offer.salary,
+      salaryCurrency: offer.salary_currency || 'INR',
+      bonus: offer.bonus,
+      equity: offer.equity,
+      benefits: offer.benefits,
+      // Dates
+      startDate: offer.start_date,
+      expiryDate: offer.expiry_date,
+      // Status
+      status: offer.status,
+      sentAt: offer.sent_at
+    };
+  } catch (error) {
+    console.error('Error getting offer details:', error);
+    return null;
+  }
 }
 
 // Middleware to verify candidate access
@@ -216,11 +306,16 @@ router.get('/application/:id', async (req, res) => {
           platform: i.platform,
           meetingLink: i.status === 'Scheduled' || i.status === 'scheduled' ? i.meetingLink : null,
           interviewer: i.interviewerName,
-          feedback: i.status === 'Completed' || i.status === 'completed' ? (i.feedback ? 'Received' : 'Pending') : null
+          feedback: i.status === 'Completed' || i.status === 'completed' ? (i.feedback ? 'Received' : 'Pending') : null,
+          // Show result for completed interviews
+          result: ['Completed', 'completed', 'Passed', 'passed'].includes(i.status) ? 'Passed' :
+                  ['Failed', 'failed', 'Rejected', 'rejected'].includes(i.status) ? 'Not Selected' : null
         })),
+        // Offer details (show when offer is sent, pending, accepted or hired)
+        offerDetails: ['offer-sent', 'offer-pending', 'offer-accepted', 'hired'].includes(application.stage) ? await getOfferDetails(application._id) : null,
         canWithdraw: !['hired', 'rejected', 'offer-accepted'].includes(application.stage),
-        canAcceptOffer: application.stage === 'offer-pending',
-        canDeclineOffer: application.stage === 'offer-pending'
+        canAcceptOffer: application.stage === 'offer-sent' || application.stage === 'offer-pending',
+        canDeclineOffer: application.stage === 'offer-sent' || application.stage === 'offer-pending'
       }
     });
   } catch (error) {
@@ -283,7 +378,7 @@ router.post('/application/:id/withdraw', async (req, res) => {
 router.post('/application/:id/respond-offer', async (req, res) => {
   try {
     const { id } = req.params;
-    const { email, token, response, message } = req.body;
+    const { email, token, response, message, joiningDate, joiningLocation, reason } = req.body;
 
     if (!email || !response) {
       return res.status(400).json({ error: 'Email and response are required' });
@@ -291,6 +386,21 @@ router.post('/application/:id/respond-offer', async (req, res) => {
 
     if (!['accept', 'decline'].includes(response)) {
       return res.status(400).json({ error: 'Response must be accept or decline' });
+    }
+
+    // Validate required fields for acceptance
+    if (response === 'accept') {
+      if (!joiningDate) {
+        return res.status(400).json({ error: 'Joining date is required to accept the offer' });
+      }
+      if (!joiningLocation) {
+        return res.status(400).json({ error: 'Joining location is required to accept the offer' });
+      }
+    }
+
+    // Validate required fields for decline
+    if (response === 'decline' && !reason) {
+      return res.status(400).json({ error: 'Reason is required to decline the offer' });
     }
 
     const application = await Application.findById(id).populate('candidate_id', 'email name').lean();
@@ -303,28 +413,74 @@ router.post('/application/:id/respond-offer', async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    if (application.stage !== 'offer-pending') {
+    if (application.stage !== 'offer-sent' && application.stage !== 'offer-pending') {
       return res.status(400).json({ error: 'No pending offer to respond to' });
     }
 
     const newStage = response === 'accept' ? 'offer-accepted' : 'offer-declined';
 
-    await Application.findByIdAndUpdate(id, {
+    // Build update object based on response type
+    const updateData = {
       stage: newStage,
-      offerResponseAt: new Date(),
-      offerResponseMessage: message
-    });
+      offerResponseAt: new Date()
+    };
+
+    if (response === 'accept') {
+      updateData.candidateJoiningDate = new Date(joiningDate);
+      updateData.candidateJoiningLocation = joiningLocation;
+      updateData.offerAcceptanceMessage = message || '';
+    } else {
+      updateData.offerDeclineReason = reason;
+    }
+
+    await Application.findByIdAndUpdate(id, updateData);
+
+    // Create activity log with detailed metadata
+    const activityMetadata = {
+      response,
+      respondedBy: 'candidate',
+      respondedAt: new Date().toISOString()
+    };
+
+    if (response === 'accept') {
+      activityMetadata.joiningDate = joiningDate;
+      activityMetadata.joiningLocation = joiningLocation;
+      activityMetadata.message = message || '';
+    } else {
+      activityMetadata.declineReason = reason;
+    }
 
     await new ActivityLog({
       application_id: id,
       action: response === 'accept' ? 'offer_accepted' : 'offer_declined',
-      description: `${application.candidate_id.name} ${response === 'accept' ? 'accepted' : 'declined'} the offer`,
-      metadata: { response, message, respondedBy: 'candidate' }
+      description: response === 'accept'
+        ? `${application.candidate_id.name} accepted the offer. Joining Date: ${new Date(joiningDate).toLocaleDateString()}, Location: ${joiningLocation}`
+        : `${application.candidate_id.name} declined the offer. Reason: ${reason}`,
+      metadata: activityMetadata
     }).save();
+
+    // Also update the Offer document if it exists
+    const offer = await Offer.findOne({ application_id: id });
+    if (offer) {
+      if (response === 'accept') {
+        offer.status = 'accepted';
+        offer.accepted_at = new Date();
+        offer.candidate_joining_date = new Date(joiningDate);
+        offer.candidate_joining_location = joiningLocation;
+        offer.candidate_acceptance_message = message || '';
+      } else {
+        offer.status = 'declined';
+        offer.declined_at = new Date();
+        offer.decline_reason = reason;
+      }
+      await offer.save();
+    }
 
     res.json({
       success: true,
-      message: response === 'accept' ? 'Congratulations! Offer accepted.' : 'Offer declined.'
+      message: response === 'accept'
+        ? 'Congratulations! Offer accepted successfully. Our HR team will be in touch soon.'
+        : 'Offer declined. We wish you all the best in your future endeavors.'
     });
   } catch (error) {
     console.error('Offer response error:', error);
@@ -423,8 +579,10 @@ router.get('/jobs', async (req, res) => {
   try {
     const { email } = req.query;
 
-    const jobs = await JobOpening.find({ on: true })
-      .select('title department location work_setup role_type about_company requirements createdAt')
+    const jobs = await JobOpening.find({ is_active: true })
+      .populate('department_id', 'name')
+      .populate('work_setup_id', 'name')
+      .select('title department department_id location work_setup work_setup_id role_type about_company requirements createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -441,9 +599,9 @@ router.get('/jobs', async (req, res) => {
     const publicJobs = jobs.map(job => ({
       id: job._id,
       title: job.title,
-      department: job.department,
+      department: job.department_id?.name || job.department,
       location: job.location,
-      workSetup: job.work_setup,
+      workSetup: job.work_setup_id?.name || job.work_setup,
       roleType: job.role_type,
       postedAt: job.createdAt,
       alreadyApplied: appliedJobIds.includes(job._id.toString())
@@ -456,6 +614,45 @@ router.get('/jobs', async (req, res) => {
   } catch (error) {
     console.error('Jobs list error:', error);
     res.status(500).json({ error: 'Failed to get jobs' });
+  }
+});
+
+// GET /api/portal/file/signed-url - Get signed URL for file download (for candidates)
+router.get('/file/signed-url', async (req, res) => {
+  try {
+    const { key, email } = req.query;
+
+    if (!key) {
+      return res.status(400).json({ error: 'File key is required' });
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required for verification' });
+    }
+
+    // Verify the candidate exists
+    const candidate = await Candidate.findOne({ email: email.toLowerCase() }).lean();
+    if (!candidate) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Check if file exists
+    const exists = await s3Service.fileExists(key);
+    if (!exists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    // Generate signed URL (valid for 1 hour)
+    const signedUrl = await s3Service.getSignedDownloadUrl(key, 3600);
+
+    res.json({
+      success: true,
+      signedUrl,
+      expiresIn: 3600
+    });
+  } catch (error) {
+    console.error('Portal signed URL error:', error);
+    res.status(500).json({ error: 'Failed to generate signed URL' });
   }
 });
 
@@ -512,6 +709,239 @@ router.get('/interview/:id/calendar', async (req, res) => {
   }
 });
 
+// GET /api/portal/assignments - Get pending assignments for candidate
+router.get('/assignments', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const candidate = await Candidate.findOne({ email: email.toLowerCase() }).lean();
+    if (!candidate) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+
+    // Find all assignments for this candidate
+    const assignments = await CandidateAssignment.find({ candidate_id: candidate._id })
+      .populate('application_id', 'job_id')
+      .populate({
+        path: 'application_id',
+        populate: { path: 'job_id', select: 'title' }
+      })
+      .sort({ sent_at: -1 })
+      .lean();
+
+    const publicAssignments = assignments.map(a => ({
+      id: a._id,
+      applicationId: a.application_id?._id,
+      jobTitle: a.application_id?.job_id?.title || 'Position',
+      assignmentName: a.assignment_name,
+      instructions: a.instructions,
+      customInstructions: a.custom_instructions,
+      link: a.link,
+      files: a.files || [],
+      deadline: a.deadline_date,
+      sentAt: a.sent_at,
+      status: a.status,
+      submissionDate: a.submission_date,
+      submissionLink: a.submission_link,
+      submissionLinks: a.submission_links || (a.submission_link ? [a.submission_link] : []),
+      submissionFiles: a.submission_files || [],
+      submissionNotes: a.submission_notes,
+      canSubmit: ['sent', 'viewed', 'in_progress'].includes(a.status),
+      isOverdue: a.deadline_date && new Date(a.deadline_date) < new Date() && !a.submission_date
+    }));
+
+    res.json({
+      success: true,
+      data: publicAssignments
+    });
+  } catch (error) {
+    console.error('Assignments fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch assignments' });
+  }
+});
+
+// POST /api/portal/assignment/:id/submit - Submit assignment
+router.post('/assignment/:id/submit', upload.array('files', 5), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, submissionLink, submissionLinks, notes } = req.body;
+
+    // Support both single link (legacy) and multiple links (new)
+    let allLinks = [];
+    if (submissionLinks) {
+      // Parse if string (from form data)
+      const parsedLinks = typeof submissionLinks === 'string' ? JSON.parse(submissionLinks) : submissionLinks;
+      allLinks = Array.isArray(parsedLinks) ? parsedLinks.filter(l => l && l.trim()) : [];
+    } else if (submissionLink) {
+      allLinks = [submissionLink];
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Find the assignment
+    const assignment = await CandidateAssignment.findById(id)
+      .populate('application_id', 'candidate_id job_id')
+      .lean();
+
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+
+    // Verify candidate owns this assignment
+    const candidate = await Candidate.findOne({ email: email.toLowerCase() }).lean();
+    if (!candidate || assignment.candidate_id?.toString() !== candidate._id.toString()) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Check if already submitted
+    if (['submitted', 'reviewed', 'passed', 'failed'].includes(assignment.status)) {
+      return res.status(400).json({ error: 'Assignment already submitted' });
+    }
+
+    // Upload files to S3 if provided
+    const uploadedFiles = [];
+    if (req.files && req.files.length > 0) {
+      const bucketName = process.env.AWS_S3_BUCKET || 'aiplanet-recruitment';
+
+      for (const file of req.files) {
+        const key = `assignments/submissions/${candidate._id}/${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+        try {
+          await s3Client.send(new PutObjectCommand({
+            Bucket: bucketName,
+            Key: key,
+            Body: file.buffer,
+            ContentType: file.mimetype
+          }));
+
+          uploadedFiles.push({
+            name: file.originalname,
+            key: key,
+            url: `https://${bucketName}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${key}`,
+            type: file.mimetype
+          });
+        } catch (uploadError) {
+          console.error('S3 upload error:', uploadError);
+          // Continue with other files even if one fails
+        }
+      }
+    }
+
+    // Validate that we have at least a link or files
+    if (allLinks.length === 0 && uploadedFiles.length === 0) {
+      return res.status(400).json({ error: 'Please provide a submission link or upload files' });
+    }
+
+    // Update the assignment
+    await CandidateAssignment.findByIdAndUpdate(id, {
+      status: 'submitted',
+      submission_date: new Date(),
+      submission_link: allLinks[0] || null, // Keep first link for backwards compatibility
+      submission_links: allLinks, // Store all links
+      submission_files: uploadedFiles,
+      submission_notes: notes || null
+    });
+
+    // Update application stage to assignment-submitted
+    if (assignment.application_id?._id) {
+      await Application.findByIdAndUpdate(assignment.application_id._id, {
+        stage: 'assignment-submitted'
+      });
+
+      // Log activity
+      await new ActivityLog({
+        application_id: assignment.application_id._id,
+        action: 'assignment_submitted',
+        description: `Candidate submitted assignment: ${assignment.assignment_name}`,
+        metadata: {
+          assignmentId: id,
+          submissionLinks: allLinks,
+          submissionLink: allLinks[0] || null,
+          filesCount: uploadedFiles.length,
+          submittedBy: 'candidate'
+        }
+      }).save();
+
+      // Get job details for notification
+      const application = await Application.findById(assignment.application_id._id)
+        .populate('job_id', 'title')
+        .lean();
+
+      // Send notification to recruiter who sent the assignment
+      const recruiterEmail = assignment.sent_by || process.env.DEFAULT_RECRUITER_EMAIL || 'hr@aiplanet.com';
+
+      try {
+        await sendAssignmentSubmissionNotification({
+          recruiterEmail,
+          candidateName: candidate.name,
+          candidateEmail: candidate.email,
+          jobTitle: application?.job_id?.title || assignment.assignment_name,
+          assignmentName: assignment.assignment_name,
+          submissionLinks: allLinks,
+          submissionLink: allLinks[0] || null,
+          filesCount: uploadedFiles.length,
+          submissionNotes: notes || null,
+          applicationId: assignment.application_id._id
+        });
+      } catch (emailError) {
+        console.error('Failed to send recruiter notification:', emailError);
+        // Don't fail the submission if email fails
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Assignment submitted successfully!',
+      data: {
+        submissionDate: new Date(),
+        filesUploaded: uploadedFiles.length
+      }
+    });
+  } catch (error) {
+    console.error('Assignment submission error:', error);
+    res.status(500).json({ error: 'Failed to submit assignment' });
+  }
+});
+
+// PUT /api/portal/assignment/:id/view - Mark assignment as viewed
+router.put('/assignment/:id/view', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const assignment = await CandidateAssignment.findById(id).lean();
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
+
+    // Verify candidate
+    const candidate = await Candidate.findOne({ email: email.toLowerCase() }).lean();
+    if (!candidate || assignment.candidate_id?.toString() !== candidate._id.toString()) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Only update if status is 'sent'
+    if (assignment.status === 'sent') {
+      await CandidateAssignment.findByIdAndUpdate(id, { status: 'viewed' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Assignment view error:', error);
+    res.status(500).json({ error: 'Failed to update assignment' });
+  }
+});
+
 /**
  * Format stage name for public display
  */
@@ -523,6 +953,7 @@ function formatStageForPublic(stage) {
     'assignment-sent': 'Assessment Sent',
     'assignment-submitted': 'Assessment Review',
     'interview': 'Interview Process',
+    'offer-sent': 'Offer Extended',
     'offer-pending': 'Offer Extended',
     'offer-accepted': 'Offer Accepted',
     'offer-declined': 'Offer Declined',
@@ -544,6 +975,7 @@ function getPublicStatus(stage) {
     'assignment-sent': 'action_required',
     'assignment-submitted': 'in_review',
     'interview': 'in_progress',
+    'offer-sent': 'action_required',
     'offer-pending': 'action_required',
     'offer-accepted': 'accepted',
     'offer-declined': 'declined',
@@ -565,6 +997,7 @@ function getStatusDescription(stage) {
     'assignment-sent': 'Please complete the assessment sent to your email.',
     'assignment-submitted': 'Thank you! Our team is reviewing your submission.',
     'interview': 'You are in the interview stage. Check your email for details.',
+    'offer-sent': 'Congratulations! We have extended an offer to you. Please review the details below and respond.',
     'offer-pending': 'Great news! We have extended an offer. Please respond.',
     'offer-accepted': 'Welcome aboard! Our HR team will contact you soon.',
     'offer-declined': 'We respect your decision. Best wishes for your future.',
@@ -592,11 +1025,30 @@ function buildPublicTimeline(application, interviews, activities) {
   // Add relevant activities
   activities.forEach(activity => {
     const eventMap = {
+      // Stage changes (note: logged as 'stage_changed' with 'd')
       'stage_change': { event: 'Status Updated', icon: '🔄' },
+      'stage_changed': { event: 'Status Updated', icon: '🔄' },
+      // Interviews
       'interview_scheduled': { event: 'Interview Scheduled', icon: '📅' },
-      'offer_sent': { event: 'Offer Sent', icon: '📝' },
+      'screening_scheduled': { event: 'Screening Call Scheduled', icon: '📞' },
+      'scorecard_submitted': { event: 'Interview Feedback Received', icon: '📋' },
+      // Assignments
+      'assignment_sent': { event: 'Assignment Sent', icon: '📝' },
+      'assignment_submitted': { event: 'Assignment Submitted', icon: '✅' },
+      // Offers
+      'offer_sent': { event: 'Offer Extended', icon: '🎁' },
       'offer_accepted': { event: 'Offer Accepted', icon: '🎉' },
-      'application_withdrawn': { event: 'Application Withdrawn', icon: '📤' }
+      'offer_rejected': { event: 'Offer Declined', icon: '❌' },
+      'offer_updated': { event: 'Offer Updated', icon: '📝' },
+      // Application status
+      'application_submitted': { event: 'Application Received', icon: '📋' },
+      'application_withdrawn': { event: 'Application Withdrawn', icon: '📤' },
+      'application_rejected': { event: 'Application Not Selected', icon: '📭' },
+      'rejected': { event: 'Application Not Selected', icon: '📭' },
+      // Other
+      'candidate_message': { event: 'Message Sent', icon: '💬' },
+      'comment_added': { event: 'Note Added', icon: '📝' },
+      'added_to_talent_pool': { event: 'Added to Talent Pool', icon: '⭐' }
     };
 
     const mapped = eventMap[activity.action];

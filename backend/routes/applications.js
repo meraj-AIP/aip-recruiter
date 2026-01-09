@@ -344,20 +344,22 @@ router.get('/:id/activity', async (req, res) => {
   }
 });
 
-// POST /api/applications/:id/comment - Add comment to application
+// POST /api/applications/:id/comment - Add comment to application (with attachment support)
 router.post('/:id/comment', async (req, res) => {
   try {
-    const { text, author, stage } = req.body;
+    const { text, author, stage, attachments } = req.body;
 
-    if (!text) {
-      return res.status(400).json({ error: 'Comment text is required' });
+    // Allow comments with just attachments (no text required if attachments present)
+    if (!text && (!attachments || attachments.length === 0)) {
+      return res.status(400).json({ error: 'Comment text or attachments required' });
     }
 
     const comment = {
-      text,
+      text: text || '',
       author: author || 'Admin',
       timestamp: new Date(),
-      stage: stage || 'unknown'
+      stage: stage || 'unknown',
+      attachments: attachments || []
     };
 
     const application = await Application.findByIdAndUpdate(
@@ -375,11 +377,12 @@ router.post('/:id/comment', async (req, res) => {
     }
 
     // Log activity
+    const attachmentInfo = attachments?.length ? ` (with ${attachments.length} attachment${attachments.length > 1 ? 's' : ''})` : '';
     await new ActivityLog({
       application_id: application._id,
       company_id: application.company_id,
       action: 'comment_added',
-      description: `Comment added: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`,
+      description: `Comment added${attachmentInfo}: "${(text || 'Attachment').substring(0, 50)}${(text || '').length > 50 ? '...' : ''}"`,
       metadata: { comment }
     }).save();
 
@@ -894,13 +897,36 @@ router.get('/:id/journey', async (req, res) => {
       }
 
       const actionMap = {
+        // Application events
         'application_submitted': { icon: '📝', title: 'Application Submitted' },
+        'application_withdrawn': { icon: '📤', title: 'Application Withdrawn' },
+        'application_rejected': { icon: '❌', title: 'Application Rejected' },
+        'rejected': { icon: '❌', title: 'Application Rejected' },
+        // Stage changes
+        'stage_changed': { icon: '➡️', title: 'Stage Changed' },
+        'stage_change': { icon: '➡️', title: 'Stage Changed' },
+        // Comments & notes
         'comment_added': { icon: '💬', title: 'Comment Added' },
+        'candidate_message': { icon: '💬', title: 'Candidate Message' },
+        // Assignments
         'assignment_sent': { icon: '📝', title: 'Assignment Sent' },
+        'assignment_submitted': { icon: '✅', title: 'Assignment Submitted' },
+        // Interviews
+        'interview_scheduled': { icon: '📅', title: 'Interview Scheduled' },
+        'screening_scheduled': { icon: '📞', title: 'Screening Call Scheduled' },
+        'scorecard_submitted': { icon: '📋', title: 'Scorecard Submitted' },
+        // Offers
+        'offer_sent': { icon: '🎁', title: 'Offer Sent' },
+        'offer_accepted': { icon: '🎉', title: 'Offer Accepted' },
+        'offer_rejected': { icon: '❌', title: 'Offer Rejected' },
+        'offer_updated': { icon: '📝', title: 'Offer Updated' },
+        // AI & misc
         'ai_scored': { icon: '🤖', title: 'AI Analysis Complete' },
-        'email_sent': { icon: '📧', title: 'Email Sent' }
+        'email_sent': { icon: '📧', title: 'Email Sent' },
+        'added_to_talent_pool': { icon: '⭐', title: 'Added to Talent Pool' },
+        'created_from_talent_pool': { icon: '📋', title: 'Created from Talent Pool' }
       };
-      const actionInfo = actionMap[activity.action] || { icon: '📋', title: activity.action };
+      const actionInfo = actionMap[activity.action] || { icon: '📋', title: activity.action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) };
 
       journey.push({
         type: activity.action,
@@ -943,6 +969,38 @@ router.get('/:id/journey', async (req, res) => {
   } catch (error) {
     console.error('Error fetching application journey:', error);
     res.status(500).json({ error: 'Failed to fetch application journey' });
+  }
+});
+
+// POST /api/applications/:id/timeline - Add a timeline entry
+router.post('/:id/timeline', async (req, res) => {
+  try {
+    const { type, title, description, createdBy } = req.body;
+
+    const application = await Application.findById(req.params.id);
+    if (!application) {
+      return res.status(404).json({ error: 'Application not found' });
+    }
+
+    // Add entry to stage_history
+    if (!application.stage_history) {
+      application.stage_history = [];
+    }
+
+    application.stage_history.push({
+      stage: application.stage,
+      action: type || 'note',
+      notes: `${title}${description ? ': ' + description : ''}`,
+      moved_by: createdBy || 'System',
+      entered_at: new Date()
+    });
+
+    await application.save();
+
+    res.json({ success: true, message: 'Timeline entry added' });
+  } catch (error) {
+    console.error('Error adding timeline entry:', error);
+    res.status(500).json({ error: 'Failed to add timeline entry' });
   }
 });
 

@@ -60,6 +60,34 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/jobs/public - Get all active jobs for public careers page (no auth)
+router.get('/public', async (req, res) => {
+  try {
+    const jobs = await JobOpening.find({ is_active: true })
+      .populate('department_id', 'name')
+      .populate('work_setup_id', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Transform to simple format for public display
+    const data = jobs.map(job => ({
+      id: job._id,
+      title: job.title,
+      department: job.department_id?.name || job.department,
+      location: job.location,
+      workSetup: job.work_setup_id?.name || job.work_setup,
+      description: job.description,
+      salary: job.salary_range,
+      postedDate: job.createdAt
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching public jobs:', error);
+    res.status(500).json({ error: 'Failed to fetch jobs' });
+  }
+});
+
 // GET /api/jobs/:id - Get single job
 router.get('/:id', async (req, res) => {
   try {

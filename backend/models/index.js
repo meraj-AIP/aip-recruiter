@@ -189,12 +189,19 @@ const applicationSchema = new Schema({
   screening_platform: String,
   screening_meeting_link: String,
   screening_duration: String,
-  // Comments array
+  // Comments array with attachment support
   comments: [{
     text: String,
     author: String,
     timestamp: Date,
-    stage: String
+    stage: String,
+    attachments: [{
+      type: { type: String, enum: ['image', 'document'] },
+      name: String,
+      url: String,
+      key: String,
+      size: Number
+    }]
   }],
   // Stage history for journey tracking
   stage_history: [{
@@ -361,7 +368,9 @@ const candidateAssignmentSchema = new Schema({
     enum: ['sent', 'viewed', 'in_progress', 'submitted', 'reviewed', 'passed', 'failed']
   },
   submission_date: Date,
-  submission_link: String,
+  submission_link: String, // Kept for backwards compatibility
+  submission_links: { type: [String], default: [] }, // Multiple submission links
+  submission_files: { type: [fileAttachmentSchema], default: [] }, // Files uploaded by candidate
   submission_notes: String,
   review_notes: String,
   reviewed_by: String,
