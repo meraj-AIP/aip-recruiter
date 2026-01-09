@@ -4026,6 +4026,14 @@ export default function App() {
     window.location.pathname.startsWith('/apply/') || window.location.pathname.startsWith('/careers/job/')
   );
 
+  // Reset loading state when navigating to job detail pages
+  useEffect(() => {
+    if (location.pathname.startsWith('/careers/job/') || location.pathname.startsWith('/apply/')) {
+      setIsLoadingPublicJob(true);
+      setSelectedJob(null); // Clear previous job to avoid flash of wrong content
+    }
+  }, [location.pathname]);
+
   const [candidate, setCandidate] = useState(null);
   const [modal, setModal] = useState(null);
   const [candidateDetailTab, setCandidateDetailTab] = useState('overview');
@@ -4807,7 +4815,8 @@ export default function App() {
     // Check if we have real data from database
     const hasRealData = openings.some(job => job._original?.id);
     if (!hasRealData) {
-      // Still waiting for real data
+      // Still waiting for real data - ensure loading state is true
+      setIsLoadingPublicJob(true);
       return;
     }
 
